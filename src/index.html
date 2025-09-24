@@ -47,11 +47,20 @@
                 <input type="number" id="joy" name="joy" min="1" max="10">
             </div>
             <div class="emotion">
-                <label for="sadness">Sadness:</label>
-                <input type="number" id="sadness" name="sadness" min="1" max="10">
+                <label for="calm">Calm:</label>
+                <input type="number" id="calm" name="calm" min="1" max="10">
             </div>
             <button type="submit">Save Emotions</button>
         </form>
+
+        <div class="controls">
+            <button id="view-history">View History</button>
+            <button id="export-json">Export JSON</button>
+            <button id="import-json">Import JSON</button>
+            <button id="clear-all">Clear All</button>
+            <input type="file" id="import-file" accept="application/json" style="display:none">
+        </div>
+
         <div id="emotion-display"></div>
     </div>
     <script src="app.js"></script>
