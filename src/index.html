@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="styles.css">
     <title>Emotion Tracker</title>
+    <meta name="theme-color" content="#4CAF50">
+    <link rel="manifest" href="/manifest.json">
+    <link rel="icon" href="/icon-192x192.svg">
 </head>
 <body>
     <div class="container">
@@ -64,5 +67,12 @@
         <div id="emotion-display"></div>
     </div>
     <script src="app.js"></script>
+
+    <script>
+    // register service worker (must be served over http(s) or localhost)
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(err => console.warn('SW register failed', err));
+    }
+    </script>
 </body>
 </html>
