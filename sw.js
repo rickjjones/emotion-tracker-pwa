@@ -1,13 +1,13 @@
 // minimal offline caching service worker
 const CACHE_NAME = 'emotion-tracker-v1';
 const ASSETS = [
-  '/', // helpful when deployed to site root
-  '/src/index.html',
-  '/src/styles.css',
-  '/src/app.js',
-  '/manifest.json',
-  '/icon-192x192.svg',
-  '/icon-512x512.svg'
+  './',               // index when served from folder
+  'index.html',
+  'styles.css',
+  'app.js',
+  'manifest.json',
+  'icon-192x192.png',
+  'icon-512x512.png'
 ];
 
 self.addEventListener('install', event => {
