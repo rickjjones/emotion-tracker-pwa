@@ -35,6 +35,20 @@ h1 {
     margin: 8px 0;
 }
 
+/* Note-specific styling */
+.note-row { align-items: flex-start; }
+.note-field {
+    flex: 1;
+    padding: 10px 12px;
+    font-size: 0.95rem;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    resize: vertical;
+    min-height: 64px;
+    background: #fff;
+}
+.note-field::placeholder { color: #999; }
+
 label {
     display: block;
     margin-bottom: 5px;

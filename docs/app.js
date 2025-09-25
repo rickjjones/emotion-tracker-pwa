@@ -1,4 +1,4 @@
-const EMOTIONS = ['happiness','sadness','anger','fear','surprise','disgust','anticipation','trust','joy','calm'];
+const EMOTIONS = ['happiness','sadness','anger','fear','surprise','disgust','anticipation','trust','joy','calm', 'note'];
 const DB_NAME = 'emotion-tracker-db';
 const STORE_NAME = 'entries';
 const DB_VERSION = 1;
@@ -88,6 +88,15 @@ function formToValues() {
     const values = {};
     EMOTIONS.forEach(key => {
         const el = document.getElementById(key);
+        if (!el) { values[key] = null; return; }
+
+        // Treat 'note' as free text; other fields are numeric 1-10
+        if (key === 'note') {
+            const txt = (el.value || '').toString().trim();
+            values[key] = txt.length ? txt : null;
+            return;
+        }
+
         if (el && el.value) {
             const n = parseInt(el.value, 10);
             values[key] = Number.isFinite(n) ? Math.max(1, Math.min(10, n)) : null;
@@ -109,10 +118,19 @@ function renderEntriesList(entries) {
     const sorted = entries.slice().sort((a,b) => b.timestamp - a.timestamp);
     const html = sorted.map(e => {
         const date = new Date(e.timestamp);
-        const values = Object.entries(e.values || {}).map(([k,v]) => `<li>${k}: ${v === null ? '—' : v}</li>`).join('');
-        return `<div class="entry"><strong>${date.toLocaleString()}</strong><ul>${values}</ul></div>`;
+        const pairs = Object.entries(e.values || {});
+        const items = pairs.filter(([k]) => k !== 'note').map(([k,v]) => `<li><strong>${escapeHtml(k)}:</strong> ${v === null ? '—' : escapeHtml(String(v))}</li>`).join('');
+        const noteHtml = (e.values && e.values.note) ? `<div class="entry-note"><strong>Note:</strong><div class="note-text">${escapeHtml(e.values.note)}</div></div>` : '';
+        return `<div class="entry"><strong>${date.toLocaleString()}</strong><ul>${items}</ul>${noteHtml}</div>`;
     }).join('');
     container.innerHTML = html;
+}
+
+// Escape HTML to avoid injection when rendering notes
+function escapeHtml(str) {
+    return String(str).replace(/[&<>"']/g, function (s) {
+        return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]);
+    });
 }
 
 async function initUI() {
