@@ -72,11 +72,35 @@
     </div>
     <script src="app.js"></script>
 
-    <script>
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('./sw.js') // use relative path
-        .catch(err => console.warn('SW register failed', err));
-    }
-    </script>
+        <script>
+        // Improved service worker registration with fetch check and detailed logging.
+        if ('serviceWorker' in navigator) {
+            // Try fetching sw.js first to get clearer errors (404 or wrong MIME type)
+            fetch('sw.js', { cache: 'no-store' }).then(resp => {
+                if (!resp.ok) throw new Error('sw.js fetch failed: ' + resp.status + ' ' + resp.statusText);
+                return navigator.serviceWorker.register('sw.js', { scope: './' });
+            }).then(reg => {
+                console.log('Service worker registered:', reg);
+            }).catch(err => {
+                console.error('Service worker registration failed:', err);
+                // Show a small notice in the page to help debugging on mobile devices
+                try {
+                    const el = document.createElement('div');
+                    el.textContent = 'Service Worker failed: ' + (err && err.message ? err.message : String(err));
+                    el.style.position = 'fixed';
+                    el.style.left = '12px';
+                    el.style.bottom = '12px';
+                    el.style.background = '#c0392b';
+                    el.style.color = '#fff';
+                    el.style.padding = '8px 10px';
+                    el.style.borderRadius = '6px';
+                    document.body.appendChild(el);
+                    setTimeout(() => el.remove(), 8000);
+                } catch (e) {
+                    // ignore
+                }
+            });
+        }
+        </script>
 </body>
 </html>
