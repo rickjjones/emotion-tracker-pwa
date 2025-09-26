@@ -1,43 +1,66 @@
 # Emotion Tracker PWA
 
-## Overview
-The Emotion Tracker PWA is a simple web application that allows users to track their emotions on a scale of 1 to 10. Users can input their emotional ratings for 10 different emotions, and the app will save this data for future reference.
+A small, offline-first Progressive Web App to record and review mood / behavior ratings. Built with plain HTML, CSS and vanilla JavaScript. The app stores entries locally using IndexedDB and is packaged as a PWA (manifest + service worker). The site is prepared to be hosted from the `docs/` folder (ideal for GitHub Pages).
 
-## Features
-- Track 10 different emotions.
-- Rate each emotion on a scale from 1 to 10.
-- Data is stored locally for offline access.
-- Progressive Web App capabilities, including service worker for caching.
+## What’s new / current state
+- UI grouped into three categories: High Moods, Low Moods, and ADHD-related items.
+- Ratings are numeric (1–10) for each tracked item and a free-text `Note` is stored with each entry.
+- Data persisted locally using IndexedDB (no server required).
+- History view with export / import (JSON) and clear-all options.
+- Service worker with precaching and an update-banner flow (skipWaiting + clients) so users can reload to activate new versions.
+- Light visual polish: category chips with subtle green variants, responsive layout and a centered container.
 
-## Project Structure
+## Project layout (important files)
 ```
-emotion-tracker-pwa
-├── src
-│   ├── index.html        # Main HTML document for the PWA
-│   ├── app.js           # JavaScript logic for handling user input and data storage
-│   └── styles.css       # CSS styles for the PWA
-├── sw.js                # Service worker for caching and offline functionality
-├── manifest.json        # Web app manifest for metadata
-├── package.json         # npm configuration file
-└── README.md            # Project documentation
+emotion-tracker-pwa/
+├── docs/                  # Deploy-ready site (what you publish to GitHub Pages)
+│   ├── index.html         # Main UI (PWA entry)
+│   ├── app.js             # IndexedDB + UI logic
+│   ├── styles.css         # App styles (includes category chip variants)
+│   ├── sw.js              # Service worker (precache + runtime caching)
+│   ├── manifest.json      # PWA manifest
+│   └── icon-*.svg         # App icons used by the manifest
+├── README.md              # This document
+├── package.json           # Optional (if you add tooling)
+└── src/                   # (unused / original source folder)
 ```
 
-## Getting Started
+## Quick start (local)
+1. Serve the `docs/` folder from a static file server. Examples:
 
-### Prerequisites
-- A modern web browser that supports PWA features.
-- Basic knowledge of HTML, CSS, and JavaScript.
+	 - Using Node (http-server):
 
-### Installation
-1. Clone the repository or download the project files.
-2. Open the `index.html` file in your web browser to run the application.
+		 ```powershell
+		 npx http-server docs -p 8080
+		 ```
 
-### Usage
-- Open the app and rate your emotions on a scale of 1 to 10.
-- Your ratings will be saved locally, allowing you to track changes over time.
+	 - Or use any static hosting / local server that serves `docs/index.html`.
 
-### Contributing
-Feel free to submit issues or pull requests if you have suggestions for improvements or new features.
+2. Open http://localhost:8080 in a supported browser (Chrome/Edge/Firefox). The app will register the service worker and work offline after the initial load.
 
-### License
-This project is open-source and available under the MIT License.
+## How it works (brief)
+- IndexedDB: a tiny wrapper in `docs/app.js` stores each entry (timestamp, numeric ratings, note).
+- UI: `index.html` contains grouped category headings and numeric inputs (1–10). The `note` field is a textarea.
+- History: saved entries render in a list. Use Export to download JSON, Import to restore, or Clear All to remove local data.
+- Service worker: `docs/sw.js` precaches core assets and supports an update flow — when a new SW version is installed, the page shows an update banner allowing users to reload and activate the new version immediately.
+
+## Styling notes
+- Category headings are styled as chips and use subtle green variants via `category--high`, `category--low`, and `category--adhd` classes in `docs/styles.css`.
+
+## Deploying to GitHub Pages
+1. Ensure the `docs/` folder contains the build / site files (it does already).
+2. In your repository settings, set GitHub Pages to serve from the `main` branch and the `/docs` folder.
+3. Commit and push changes; GitHub Pages will serve the site at `https://<your-username>.github.io/<repo-name>/`.
+
+## Testing the update flow
+1. Bump the `CACHE_NAME` in `docs/sw.js` (e.g. `emotion-tracker-v2` → `emotion-tracker-v3`).
+2. Reload the page. The new service worker will install in the background and the app will display an update banner when the worker reaches the `waiting` state. Click Reload to activate.
+
+## Contributing
+Contributions are welcome. If you make changes, please keep the PWA logic and `docs/` folder consistent with paths (service worker and manifest use relative paths).
+
+## License
+MIT
+
+---
+If you'd like, I can also (a) bump the service worker cache name and run a quick local test of the update banner, or (b) create a small screenshot or demo GIF to show the new chip styles.
