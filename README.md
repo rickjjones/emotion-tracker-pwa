@@ -63,4 +63,3 @@ Contributions are welcome. If you make changes, please keep the PWA logic and `d
 MIT
 
 ---
-If you'd like, I can also (a) bump the service worker cache name and run a quick local test of the update banner, or (b) create a small screenshot or demo GIF to show the new chip styles.
