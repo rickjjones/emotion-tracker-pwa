@@ -7,7 +7,7 @@
     <title>Emotion Tracker</title>
     <meta name="theme-color" content="#4CAF50">
     <link rel="manifest" href="manifest.json"> <!-- removed leading slash -->
-    <link rel="icon" href="icon-192x192.png">    <!-- removed leading slash -->
+    <link rel="icon" href="icon-192x192.svg">    <!-- removed leading slash -->
 </head>
 <body>
     <div class="container">
@@ -99,14 +99,87 @@
     <script src="app.js"></script>
 
         <script>
-        // Improved service worker registration with fetch check and detailed logging.
-        if ('serviceWorker' in navigator) {
+                // Improved service worker registration with fetch check and detailed logging.
+
+                // helper: show a small update bar with a reload button and 10s auto-reload
+                function showUpdateBanner(worker) {
+                    try {
+                        const existing = document.getElementById('sw-update');
+                        if (existing) return; // already shown
+
+                        const bar = document.createElement('div');
+                        bar.id = 'sw-update';
+                        bar.className = 'sw-update';
+
+                        const msg = document.createElement('div');
+                        msg.className = 'sw-update__msg';
+                        msg.textContent = 'A new version is available. Reloading in 10s...';
+
+                        const actions = document.createElement('div');
+
+                        const reloadBtn = document.createElement('button');
+                        reloadBtn.className = 'sw-update__btn';
+                        reloadBtn.textContent = 'Reload now';
+                        reloadBtn.addEventListener('click', () => {
+                            try { worker.postMessage({ type: 'SKIP_WAITING' }); } catch (e) { console.error(e); }
+                        });
+
+                        const cancelBtn = document.createElement('button');
+                        cancelBtn.className = 'sw-update__btn';
+                        cancelBtn.style.background = '#999';
+                        cancelBtn.textContent = 'Cancel';
+                        cancelBtn.addEventListener('click', () => {
+                            clearInterval(countdown);
+                            bar.remove();
+                        });
+
+                        actions.appendChild(reloadBtn);
+                        actions.appendChild(cancelBtn);
+
+                        bar.appendChild(msg);
+                        bar.appendChild(actions);
+                        document.body.appendChild(bar);
+
+                        let seconds = 10;
+                        const countdown = setInterval(() => {
+                            seconds -= 1;
+                            msg.textContent = `A new version is available. Reloading in ${seconds}s...`;
+                            if (seconds <= 0) {
+                                clearInterval(countdown);
+                                try { worker.postMessage({ type: 'SKIP_WAITING' }); } catch (e) { console.error(e); }
+                            }
+                        }, 1000);
+
+                        // Attempt to reload when the worker activates
+                        try {
+                          worker.addEventListener('statechange', () => {
+                            if (worker.state === 'activated') window.location.reload();
+                          });
+                        } catch (e) { /* ignore */ }
+
+                    } catch (e) { console.error(e); }
+                }
+
+                if ('serviceWorker' in navigator) {
             // Try fetching sw.js first to get clearer errors (404 or wrong MIME type)
             fetch('sw.js', { cache: 'no-store' }).then(resp => {
                 if (!resp.ok) throw new Error('sw.js fetch failed: ' + resp.status + ' ' + resp.statusText);
                 return navigator.serviceWorker.register('sw.js', { scope: './' });
             }).then(reg => {
                 console.log('Service worker registered:', reg);
+                // If there's an already-waiting worker (from a previous update), prompt user
+                if (reg.waiting) {
+                    showUpdateBanner(reg.waiting);
+                }
+                reg.addEventListener('updatefound', () => {
+                    const installing = reg.installing;
+                    installing.addEventListener('statechange', () => {
+                        if (installing.state === 'installed' && navigator.serviceWorker.controller) {
+                            // new update available
+                            showUpdateBanner(installing);
+                        }
+                    });
+                });
             }).catch(err => {
                 console.error('Service worker registration failed:', err);
                 // Show a small notice in the page to help debugging on mobile devices
@@ -124,9 +197,25 @@
                     setTimeout(() => el.remove(), 8000);
                 } catch (e) {
                     // ignore
-                }
+                        }
+                        // helper: show a small update bar with a reload button
+                        function showUpdateBanner(worker) {
+                            // helper moved to top-level showUpdateBanner(worker)
+                        }
             });
         }
+                // Listen for messages from the service worker (e.g., SW_UPDATED)
+                navigator.serviceWorker && navigator.serviceWorker.addEventListener && navigator.serviceWorker.addEventListener('message', (e) => {
+                    if (e.data && e.data.type === 'SW_UPDATED') {
+                        // A new worker activated in the background — prompt reload
+                        // Try to find a waiting worker to perform skipWaiting flow
+                        if (navigator.serviceWorker.controller) {
+                            // There is an active controller; show the banner so the user can reload
+                            // We don't have a worker reference here, but reloading will pick up the latest.
+                            showUpdateBanner({ postMessage: () => {} });
+                        }
+                    }
+                });
         </script>
 </body>
 </html>

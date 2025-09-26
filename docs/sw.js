@@ -1,13 +1,13 @@
 // service worker for docs/ site (use relative paths so it works on GitHub Pages project sites)
-const CACHE_NAME = 'emotion-tracker-v2';
+const CACHE_NAME = 'emotion-tracker-v4';
 const ASSETS = [
   './',
   'index.html',
   'styles.css',
   'app.js',
   'manifest.json',
-  'icon-192x192.png',
-  'icon-512x512.png'
+  'icon-192x192.svg',
+  'icon-512x512.svg'
 ];
 
 self.addEventListener('install', event => {
@@ -22,6 +22,22 @@ self.addEventListener('activate', event => {
       Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
     ).then(() => self.clients.claim())
   );
+});
+
+// Notify clients when there's a new service worker activated
+self.addEventListener('activate', event => {
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window' }).then(clients => {
+      clients.forEach(client => client.postMessage({ type: 'SW_UPDATED' }));
+    })
+  );
+});
+
+// Allow the page to tell the SW to skipWaiting and activate immediately
+self.addEventListener('message', event => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
 
 self.addEventListener('fetch', event => {

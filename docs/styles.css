@@ -54,6 +54,8 @@ h1 {
     font-size: 1.05rem;
     margin: 14px 0 8px;
     color: #2c3e50;
+    text-align: center;
+    font-weight: 600;
 }
 
 .entry-note { margin-top: 8px; }
@@ -77,6 +79,7 @@ input[type="number"] {
     font-size: 1rem;
     border: 1px solid #ddd;
     border-radius: 6px;
+    appearance: textfield;
     -moz-appearance: textfield;
 }
 
@@ -147,4 +150,32 @@ footer {
     form .emotion label {
         width: 100%;
     }
+
+    .category { font-size: 1rem; margin-top: 10px; }
 }
+
+/* Service worker update banner */
+.sw-update {
+    position: fixed;
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    background: #2c3e50;
+    color: #fff;
+    padding: 12px;
+    border-radius: 8px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    z-index: 1000;
+}
+.sw-update__btn {
+    background: var(--accent);
+    border: none;
+    color: #fff;
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+}
+.sw-update__btn:focus { outline: 2px solid rgba(255,255,255,0.2); }
+.sw-update__msg { margin-right: 12px; }
