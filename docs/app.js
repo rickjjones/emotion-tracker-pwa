@@ -1,4 +1,32 @@
-const EMOTIONS = ['happiness','sadness','anger','fear','surprise','disgust','anticipation','trust','joy','calm', 'note'];
+const EMOTIONS = [
+    // High Moods
+    'excitement','talkative','inflated_self_confidence','sleep_high',
+    // Low Moods
+    'energy','unmotivated','sleep_low','guilt','indecisive','crying',
+    // ADHD
+    'impulsive','absent_minded','time_management','interrupting','overwhelmed',
+    // Note
+    'note'
+];
+
+const LABELS = {
+    excitement: 'Excitement',
+    talkative: 'Talkative',
+    inflated_self_confidence: 'Inflated self confidence',
+    sleep_high: 'Sleep (high)',
+    energy: 'Energy',
+    unmotivated: 'Unmotivated',
+    sleep_low: 'Sleep (low)',
+    guilt: 'Guilt',
+    indecisive: 'Indecisive',
+    crying: 'Crying',
+    impulsive: 'Impulsive',
+    absent_minded: 'Absent minded',
+    time_management: 'Time management',
+    interrupting: 'Interrupting',
+    overwhelmed: 'Overwhelmed',
+    note: 'Note'
+};
 const DB_NAME = 'emotion-tracker-db';
 const STORE_NAME = 'entries';
 const DB_VERSION = 1;
@@ -119,7 +147,10 @@ function renderEntriesList(entries) {
     const html = sorted.map(e => {
         const date = new Date(e.timestamp);
         const pairs = Object.entries(e.values || {});
-        const items = pairs.filter(([k]) => k !== 'note').map(([k,v]) => `<li><strong>${escapeHtml(k)}:</strong> ${v === null ? '—' : escapeHtml(String(v))}</li>`).join('');
+        const items = pairs.filter(([k]) => k !== 'note').map(([k,v]) => {
+            const label = LABELS[k] || k;
+            return `<li><strong>${escapeHtml(label)}:</strong> ${v === null ? '—' : escapeHtml(String(v))}</li>`;
+        }).join('');
         const noteHtml = (e.values && e.values.note) ? `<div class="entry-note"><strong>Note:</strong><div class="note-text">${escapeHtml(e.values.note)}</div></div>` : '';
         return `<div class="entry"><strong>${date.toLocaleString()}</strong><ul>${items}</ul>${noteHtml}</div>`;
     }).join('');
@@ -149,9 +180,22 @@ async function initUI() {
         flashMessage('Saved');
     });
 
-    document.getElementById('view-history').addEventListener('click', async () => {
-        const entries = await getAllEntries();
-        renderEntriesList(entries);
+    const viewBtn = document.getElementById('view-history');
+    const display = document.getElementById('emotion-display');
+    // Hide history by default
+    if (display) display.style.display = 'none';
+
+    viewBtn.addEventListener('click', async () => {
+        if (!display) return;
+        if (display.style.display === 'none' || display.style.display === '') {
+            const entries = await getAllEntries();
+            renderEntriesList(entries);
+            display.style.display = 'block';
+            viewBtn.textContent = 'Hide History';
+        } else {
+            display.style.display = 'none';
+            viewBtn.textContent = 'View History';
+        }
     });
 
     document.getElementById('export-json').addEventListener('click', () => {
@@ -171,8 +215,11 @@ async function initUI() {
             const text = await file.text();
             const data = JSON.parse(text);
             await importEntriesFromArray(data);
+            // Refresh history only if it's visible
             const entries = await getAllEntries();
-            renderEntriesList(entries);
+            if (display && display.style.display !== 'none') {
+                renderEntriesList(entries);
+            }
             flashMessage('Imported');
         } catch (err) {
             flashMessage('Import failed', true);

@@ -49,6 +49,16 @@ h1 {
 }
 .note-field::placeholder { color: #999; }
 
+/* Category headings */
+.category {
+    font-size: 1.05rem;
+    margin: 14px 0 8px;
+    color: #2c3e50;
+}
+
+.entry-note { margin-top: 8px; }
+.note-text { background:#fff; border:1px solid #eee; padding:8px; border-radius:6px; margin-top:6px; }
+
 label {
     display: block;
     margin-bottom: 5px;
