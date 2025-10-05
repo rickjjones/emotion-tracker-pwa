@@ -112,6 +112,54 @@ async function exportEntriesToJson() {
     URL.revokeObjectURL(url);
 }
 
+// Utility: escape a CSV cell according to RFC4180
+function csvEscape(cell) {
+    if (cell === null || typeof cell === 'undefined') return '';
+    const s = String(cell);
+    // If contains special chars, wrap in quotes and escape quotes
+    if (/[",\r\n]/.test(s)) {
+        return '"' + s.replace(/"/g, '""') + '"';
+    }
+    return s;
+}
+
+// Export all entries to CSV with stable headers
+async function exportEntriesToCsv() {
+    const entries = await getAllEntries();
+    if (!entries || entries.length === 0) {
+        flashMessage('No entries to export', true);
+        return;
+    }
+
+    // Define header order: timestamp, id, then each EMOTION (in defined order)
+    const headers = ['timestamp', 'id', ...EMOTIONS.filter(k => k !== 'note'), 'note'];
+
+    // Build rows
+    const rows = entries.map(e => {
+        const row = [];
+        row.push(new Date(e.timestamp).toISOString());
+        row.push(e.id || '');
+        const vals = e.values || {};
+        EMOTIONS.filter(k => k !== 'note').forEach(k => {
+            const v = vals[k];
+            row.push(v === null || typeof v === 'undefined' ? '' : v);
+        });
+        row.push(vals.note || '');
+        return row.map(csvEscape).join(',');
+    });
+
+    const csv = [headers.map(csvEscape).join(','), ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `emotion-entries-${new Date().toISOString()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+}
+
 function formToValues() {
     const values = {};
     EMOTIONS.forEach(key => {
@@ -200,6 +248,12 @@ async function initUI() {
 
     document.getElementById('export-json').addEventListener('click', () => {
         exportEntriesToJson();
+    });
+
+    // Export CSV button (new)
+    const exportCsvBtn = document.getElementById('export-csv');
+    if (exportCsvBtn) exportCsvBtn.addEventListener('click', () => {
+        exportEntriesToCsv();
     });
 
     const importFile = document.getElementById('import-file');
