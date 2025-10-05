@@ -148,6 +148,32 @@ footer {
     cursor: pointer;
 }
 
+/* Hamburger menu styles */
+#menu-toggle {
+    padding: 8px 12px;
+    border-radius: 8px;
+    border: 1px solid #ddd;
+    background: var(--accent);
+    color: #fff;
+    cursor: pointer;
+}
+.menu-flyout {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-top: 10px;
+    background: #fff;
+    border: 1px solid #eee;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
+    border-radius: 8px;
+    padding: 8px;
+    min-width: 220px;
+    z-index: 200;
+}
+.menu-row { padding: 6px 4px; }
+.menu-row button { width: 100%; text-align: left; background: #f8f8f8; border: 1px solid #e6e6e6; color: #333 }
+.menu-legend { text-align: center; margin-top: 8px; color: #666; font-size: 0.9rem }
+
 #emotion-display {
     margin-top: 14px;
 }
@@ -159,6 +185,10 @@ footer {
     margin-bottom: 8px;
     background: #fafafa;
 }
+
+.entry__meta { display:flex; justify-content:space-between; align-items:center; gap:8px }
+.badge-exported { background: #e6f6ea; color: #1b5e20; border: 1px solid rgba(76,175,80,0.12); padding:4px 8px; border-radius:999px; font-size:0.8rem }
+.btn-undo { background:#fff; border:1px solid #ddd; padding:6px 8px; border-radius:6px; cursor:pointer }
 
 .entry ul {
     margin: 8px 0 0;

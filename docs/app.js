@@ -51,7 +51,7 @@ async function addEntry(values) {
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        const record = { timestamp: Date.now(), values };
+        const record = { timestamp: Date.now(), values, exported: false };
         const req = store.add(record);
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
@@ -90,13 +90,84 @@ async function importEntriesFromArray(arr) {
             // keep original timestamp if present, otherwise set now
             const record = {
                 timestamp: item.timestamp || Date.now(),
-                values: item.values || item
+                values: item.values || item,
+                exported: item.exported || false
             };
             store.add(record);
         });
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
     });
+}
+
+// Return entries where exported !== true
+async function getUnsyncedEntries() {
+    const entries = await getAllEntries();
+    return (entries || []).filter(e => !e.exported);
+}
+
+// Mark entries (by id array) as exported=true
+async function markEntriesExported(ids) {
+    if (!Array.isArray(ids) || ids.length === 0) return;
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        ids.forEach(id => {
+            const req = store.get(id);
+            req.onsuccess = () => {
+                const rec = req.result;
+                if (rec) {
+                    rec.exported = true;
+                    store.put(rec);
+                }
+            };
+        });
+        tx.oncomplete = () => {
+            try { localStorage.setItem('lastExportedIds', JSON.stringify(ids)); } catch(e) { /* ignore */ }
+            resolve();
+        };
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+// Export unsynced entries to CSV and mark them as exported
+async function exportUnsyncedToCsv() {
+    const unsynced = await getUnsyncedEntries();
+    if (!unsynced || unsynced.length === 0) {
+        flashMessage('No unsynced entries to export', true);
+        return;
+    }
+
+    // Use same CSV builder as exportEntriesToCsv but only for unsynced
+    const headers = ['timestamp', 'id', ...getEmotionCsvKeys()];
+    const rows = unsynced.map(e => {
+        const row = [];
+        row.push(new Date(e.timestamp).toISOString());
+        row.push(e.id || '');
+        const vals = e.values || {};
+        getEmotionCsvKeys().forEach(k => {
+            const v = vals[k];
+            row.push(v === null || typeof v === 'undefined' ? '' : v);
+        });
+        return row.map(csvEscape).join(',');
+    });
+
+    const csv = [headers.map(csvEscape).join(','), ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `emotion-unsynced-${new Date().toISOString()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+
+    // Mark exported
+    const ids = unsynced.map(e => e.id).filter(Boolean);
+    await markEntriesExported(ids);
+    flashMessage(`Exported ${ids.length} entries`);
 }
 
 async function exportEntriesToJson() {
@@ -204,7 +275,8 @@ function renderEntriesList(entries) {
             return `<li><strong>${escapeHtml(label)}:</strong> ${v === null ? '—' : escapeHtml(String(v))}</li>`;
         }).join('');
         const noteHtml = (e.values && e.values.note) ? `<div class="entry-note"><strong>Note:</strong><div class="note-text">${escapeHtml(e.values.note)}</div></div>` : '';
-        return `<div class="entry"><strong>${date.toLocaleString()}</strong><ul>${items}</ul>${noteHtml}</div>`;
+        const exportedBadge = e.exported ? `<span class="badge-exported">Exported</span>` : '';
+        return `<div class="entry"><div class="entry__meta"><strong>${date.toLocaleString()}</strong>${exportedBadge}</div><ul>${items}</ul>${noteHtml}</div>`;
     }).join('');
     container.innerHTML = html;
 }
@@ -260,6 +332,12 @@ async function initUI() {
         exportEntriesToCsv();
     });
 
+    // Export Unsynced button
+    const exportUnsyncedBtn = document.getElementById('export-unsynced');
+    if (exportUnsyncedBtn) exportUnsyncedBtn.addEventListener('click', () => {
+        exportUnsyncedToCsv();
+    });
+
     const importFile = document.getElementById('import-file');
     document.getElementById('import-json').addEventListener('click', () => {
         importFile.value = '';
@@ -292,9 +370,66 @@ async function initUI() {
         flashMessage('Cleared');
     });
 
+    // Undo last export: read lastExportedIds from localStorage and mark exported=false for them
+    const undoBtn = document.getElementById('undo-last-export');
+    if (undoBtn) undoBtn.addEventListener('click', async () => {
+        const raw = localStorage.getItem('lastExportedIds');
+        if (!raw) { flashMessage('Nothing to undo', true); return; }
+        let ids;
+        try { ids = JSON.parse(raw); } catch (e) { flashMessage('Nothing to undo', true); return; }
+        if (!Array.isArray(ids) || ids.length === 0) { flashMessage('Nothing to undo', true); return; }
+        // revert
+        const db = await openDb();
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        const store = tx.objectStore(STORE_NAME);
+        ids.forEach(id => {
+            const req = store.get(id);
+            req.onsuccess = () => {
+                const rec = req.result;
+                if (rec) {
+                    rec.exported = false;
+                    store.put(rec);
+                }
+            };
+        });
+        tx.oncomplete = async () => {
+            localStorage.removeItem('lastExportedIds');
+            const entries = await getAllEntries();
+            renderEntriesList(entries);
+            flashMessage('Undo complete');
+        };
+        tx.onerror = () => {
+            flashMessage('Undo failed', true);
+        };
+    });
+
     // initial render
     const entries = await getAllEntries();
     renderEntriesList(entries);
+
+    // Menu toggle behavior: open/close and outside click to close
+    const menuToggle = document.getElementById('menu-toggle');
+    const menuFlyout = document.getElementById('menu-flyout');
+    if (menuToggle && menuFlyout) {
+        menuToggle.addEventListener('click', () => {
+            const open = menuFlyout.hasAttribute('hidden') ? false : true;
+            if (open) {
+                menuFlyout.setAttribute('hidden', '');
+                menuToggle.setAttribute('aria-expanded', 'false');
+            } else {
+                menuFlyout.removeAttribute('hidden');
+                menuToggle.setAttribute('aria-expanded', 'true');
+            }
+        });
+
+        // close when clicking outside
+        document.addEventListener('click', (ev) => {
+            if (!menuFlyout.contains(ev.target) && ev.target !== menuToggle) {
+                menuFlyout.setAttribute('hidden', '');
+                menuToggle.setAttribute('aria-expanded', 'false');
+            }
+        });
+    }
 }
 
 function flashMessage(text, isError) {
