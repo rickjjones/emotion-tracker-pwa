@@ -411,22 +411,45 @@ async function initUI() {
     const menuToggle = document.getElementById('menu-toggle');
     const menuFlyout = document.getElementById('menu-flyout');
     if (menuToggle && menuFlyout) {
-        menuToggle.addEventListener('click', () => {
-            const open = menuFlyout.hasAttribute('hidden') ? false : true;
-            if (open) {
+        const toggleOpen = (ev) => {
+            if (ev && ev.stopPropagation) ev.stopPropagation();
+            const isHidden = menuFlyout.hasAttribute('hidden');
+            if (!isHidden) {
                 menuFlyout.setAttribute('hidden', '');
                 menuToggle.setAttribute('aria-expanded', 'false');
             } else {
                 menuFlyout.removeAttribute('hidden');
                 menuToggle.setAttribute('aria-expanded', 'true');
+                // move focus into the first button for a11y
+                const firstBtn = menuFlyout.querySelector('button');
+                if (firstBtn) firstBtn.focus();
             }
-        });
+        };
 
-        // close when clicking outside
+        // handle both click and touchstart for better mobile reliability
+        menuToggle.addEventListener('click', toggleOpen);
+        menuToggle.addEventListener('touchstart', (ev) => { ev.preventDefault(); toggleOpen(ev); }, { passive: false });
+
+        // prevent clicks inside the flyout from bubbling up and closing it
+        menuFlyout.addEventListener('click', (ev) => { ev.stopPropagation(); });
+        menuFlyout.addEventListener('touchstart', (ev) => { ev.stopPropagation(); }, { passive: true });
+
+        // close when clicking anywhere outside
         document.addEventListener('click', (ev) => {
             if (!menuFlyout.contains(ev.target) && ev.target !== menuToggle) {
                 menuFlyout.setAttribute('hidden', '');
                 menuToggle.setAttribute('aria-expanded', 'false');
+            }
+        });
+
+        // ESC to close
+        document.addEventListener('keydown', (ev) => {
+            if (ev.key === 'Escape') {
+                if (!menuFlyout.hasAttribute('hidden')) {
+                    menuFlyout.setAttribute('hidden', '');
+                    menuToggle.setAttribute('aria-expanded', 'false');
+                    menuToggle.focus();
+                }
             }
         });
     }
