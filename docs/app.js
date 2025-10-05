@@ -123,6 +123,11 @@ function csvEscape(cell) {
     return s;
 }
 
+// Helper to get emotion keys for CSV (excluding 'note', then add 'note' at end)
+function getEmotionCsvKeys() {
+    return [...EMOTIONS.filter(k => k !== 'note'), 'note'];
+}
+
 // Export all entries to CSV with stable headers
 async function exportEntriesToCsv() {
     const entries = await getAllEntries();
@@ -132,7 +137,7 @@ async function exportEntriesToCsv() {
     }
 
     // Define header order: timestamp, id, then each EMOTION (in defined order)
-    const headers = ['timestamp', 'id', ...EMOTIONS.filter(k => k !== 'note'), 'note'];
+    const headers = ['timestamp', 'id', ...getEmotionCsvKeys()];
 
     // Build rows
     const rows = entries.map(e => {
@@ -140,11 +145,10 @@ async function exportEntriesToCsv() {
         row.push(new Date(e.timestamp).toISOString());
         row.push(e.id || '');
         const vals = e.values || {};
-        EMOTIONS.filter(k => k !== 'note').forEach(k => {
+        getEmotionCsvKeys().forEach(k => {
             const v = vals[k];
             row.push(v === null || typeof v === 'undefined' ? '' : v);
         });
-        row.push(vals.note || '');
         return row.map(csvEscape).join(',');
     });
 
