@@ -160,7 +160,7 @@ footer {
 .menu-flyout {
     position: absolute;
     left: 50%;
-    transform: translateX(-50%);
+    transform: translateX(-50%) translateY(-6px);
     margin-top: 10px;
     background: #fff;
     border: 1px solid #eee;
@@ -169,10 +169,19 @@ footer {
     padding: 8px;
     min-width: 220px;
     z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 180ms ease, transform 200ms cubic-bezier(.2,.9,.2,1);
 }
 .menu-row { padding: 6px 4px; }
 .menu-row button { width: 100%; text-align: left; background: #f8f8f8; border: 1px solid #e6e6e6; color: #333 }
 .menu-legend { text-align: center; margin-top: 8px; color: #666; font-size: 0.9rem }
+
+.menu-flyout.open {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) translateY(0);
+}
 
 @media (max-width: 520px) {
     .menu-flyout {

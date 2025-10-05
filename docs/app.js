@@ -413,15 +413,17 @@ async function initUI() {
     if (menuToggle && menuFlyout) {
         const toggleOpen = (ev) => {
             if (ev && ev.stopPropagation) ev.stopPropagation();
-            const isHidden = menuFlyout.hasAttribute('hidden');
-            if (!isHidden) {
-                menuFlyout.setAttribute('hidden', '');
+            const isOpen = menuFlyout.classList.contains('open');
+            if (isOpen) {
+                menuFlyout.classList.remove('open');
                 menuToggle.setAttribute('aria-expanded', 'false');
+                console.log("close menu");
             } else {
-                menuFlyout.removeAttribute('hidden');
+                menuFlyout.classList.add('open');
                 menuToggle.setAttribute('aria-expanded', 'true');
                 // move focus into the first button for a11y
                 const firstBtn = menuFlyout.querySelector('button');
+                console.log("Open menu");
                 if (firstBtn) firstBtn.focus();
             }
         };
@@ -431,13 +433,13 @@ async function initUI() {
         menuToggle.addEventListener('touchstart', (ev) => { ev.preventDefault(); toggleOpen(ev); }, { passive: false });
 
         // prevent clicks inside the flyout from bubbling up and closing it
-        menuFlyout.addEventListener('click', (ev) => { ev.stopPropagation(); });
+    menuFlyout.addEventListener('click', (ev) => { ev.stopPropagation(); });
         menuFlyout.addEventListener('touchstart', (ev) => { ev.stopPropagation(); }, { passive: true });
 
         // close when clicking anywhere outside
         document.addEventListener('click', (ev) => {
             if (!menuFlyout.contains(ev.target) && ev.target !== menuToggle) {
-                menuFlyout.setAttribute('hidden', '');
+                menuFlyout.classList.remove('open');
                 menuToggle.setAttribute('aria-expanded', 'false');
             }
         });
@@ -445,8 +447,8 @@ async function initUI() {
         // ESC to close
         document.addEventListener('keydown', (ev) => {
             if (ev.key === 'Escape') {
-                if (!menuFlyout.hasAttribute('hidden')) {
-                    menuFlyout.setAttribute('hidden', '');
+                if (menuFlyout.classList.contains('open')) {
+                    menuFlyout.classList.remove('open');
                     menuToggle.setAttribute('aria-expanded', 'false');
                     menuToggle.focus();
                 }
