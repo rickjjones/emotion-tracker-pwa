@@ -148,54 +148,9 @@ footer {
     cursor: pointer;
 }
 
-/* Hamburger menu styles */
-#menu-toggle {
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid #ddd;
-    background: var(--accent);
-    color: #fff;
-    cursor: pointer;
-}
-.menu-flyout {
-    position: absolute;
-    left: 50%;
-    transform: translateX(-50%) translateY(-6px);
-    margin-top: 10px;
-    background: #fff;
-    border: 1px solid #eee;
-    box-shadow: 0 6px 18px rgba(0,0,0,0.08);
-    border-radius: 8px;
-    padding: 8px;
-    min-width: 220px;
-    z-index: 200;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 180ms ease, transform 200ms cubic-bezier(.2,.9,.2,1);
-}
-.menu-row { padding: 6px 4px; }
-.menu-row button { width: 100%; text-align: left; background: #f8f8f8; border: 1px solid #e6e6e6; color: #333 }
-.menu-legend { text-align: center; margin-top: 8px; color: #666; font-size: 0.9rem }
-
-.menu-flyout.open {
-    opacity: 1;
-    pointer-events: auto;
-    transform: translateX(-50%) translateY(0);
-}
-
-@media (max-width: 520px) {
-    .menu-flyout {
-        left: 12px;
-        right: 12px;
-        transform: none;
-        min-width: auto;
-        top: auto;
-        position: fixed;
-        bottom: 80px;
-        margin: 0;
-    }
-    .menu-row button { font-size: 1rem; padding: 10px }
-}
+/* Controls (classic buttons) */
+.controls { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; justify-content:center }
+.controls button { padding:8px 10px; border-radius:8px; border:1px solid #ddd; background:#222; color:#fff }
 
 #emotion-display {
     margin-top: 14px;
