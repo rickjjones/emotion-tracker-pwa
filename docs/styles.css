@@ -1,17 +1,32 @@
 :root{
-  --accent:#4CAF50;
-  --bg:#ffffff;
-  --text:#222;
+    --accent:#4CAF50;
+    --bg:#ffffff;
+    --panel:#ffffff;
+    --muted:#666666;
+    --text:#222222;
+    --input-bg:#ffffff;
+    --card:#fafafa;
+}
+
+/* Dark theme variables applied when .dark is on <html> */
+html.dark{
+    --accent: #57d37b;
+    --bg: #0f1720;
+    --panel: #0b1220;
+    --muted: #aab3bf;
+    --text: #e6eef6;
+    --input-bg: #0b1220;
+    --card: #09101a;
 }
 
 *{box-sizing:border-box}
-html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial;transition:background-color .22s ease,color .22s ease}
 
 body {
     font-family: Arial, sans-serif;
-    background-color: #f4f4f4;
     margin: 0;
     padding: 20px;
+    background: var(--bg);
 }
 
 h1 {
@@ -25,7 +40,7 @@ h1 {
     padding: 16px;
     border-radius: 10px;
     box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-    background: #fff;
+    background: var(--panel);
 }
 
 .emotion {
@@ -41,11 +56,12 @@ h1 {
     flex: 1;
     padding: 10px 12px;
     font-size: 0.95rem;
-    border: 1px solid #e0e0e0;
+    border: 1px solid rgba(0,0,0,0.06);
     border-radius: 8px;
     resize: vertical;
     min-height: 64px;
-    background: #fff;
+    background: var(--input-bg);
+    color: var(--text);
 }
 .note-field::placeholder { color: #999; }
 
@@ -53,7 +69,7 @@ h1 {
 .category {
     font-size: 1.05rem;
     margin: 14px 0 8px;
-    color: #2c3e50;
+    color: var(--text);
     text-align: center;
     font-weight: 600;
 }
@@ -64,7 +80,7 @@ h1 {
     padding: 6px 12px;
     border-radius: 999px;
     border: 1px solid rgba(44,62,80,0.06);
-    background: linear-gradient(180deg, rgba(255,255,255,0.6), rgba(250,250,250,0.6));
+    background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(250,250,250,0.02));
 }
 
 .category--high {
@@ -102,17 +118,28 @@ input[type="number"] {
     flex: 1;
     padding: 8px;
     font-size: 1rem;
-    border: 1px solid #ddd;
+    border: 1px solid rgba(0,0,0,0.06);
     border-radius: 6px;
     appearance: textfield;
     -moz-appearance: textfield;
+    background: var(--input-bg);
+    color: var(--text);
+}
+
+/* Dark-mode outlines for inputs/textarea */
+html.dark input[type="number"], html.dark .note-field, html.dark input[type="text"], html.dark textarea {
+    box-shadow: 0 0 0 1px rgba(87,211,123,0.06) inset; /* subtle inner outline using accent-ish */
+}
+
+html.dark input[type="number"]:focus, html.dark .note-field:focus, html.dark input[type="text"]:focus, html.dark textarea:focus {
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(87,211,123,0.14), 0 0 0 1px rgba(87,211,123,0.24) inset;
 }
 
 button {
-    display: block;
-    width: 100%;
+    display: inline-block;
     padding: 10px;
-    background-color: #28a745;
+    background-color: var(--accent);
     color: white;
     border: 0;
     border-radius: 8px;
@@ -121,9 +148,10 @@ button {
     cursor: pointer;
 }
 
-button:hover {
-    background-color: #218838;
-}
+button:hover { filter: brightness(.95); }
+
+/* theme toggle */
+#theme-toggle { background: transparent; border: 0; font-size: 1.1rem; padding:6px 8px; cursor:pointer; color:var(--text) }
 
 footer {
     text-align: center;
@@ -143,7 +171,7 @@ footer {
 .controls button {
     padding: 8px 10px;
     border-radius: 8px;
-    border: 1px solid #ddd;
+    border: 1px solid rgba(0,0,0,0.06);
     background: #222;
     cursor: pointer;
 }
@@ -159,9 +187,9 @@ footer {
 .entry {
     padding: 10px;
     border-radius: 8px;
-    border: 1px solid #eee;
+    border: 1px solid rgba(255,255,255,0.03);
     margin-bottom: 8px;
-    background: #fafafa;
+    background: var(--card);
 }
 
 .entry__meta { display:flex; justify-content:space-between; align-items:center; gap:8px }

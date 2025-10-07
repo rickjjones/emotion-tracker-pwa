@@ -381,6 +381,42 @@ async function initUI() {
     renderEntriesList(entries);
 }
 
+// ----- Dark mode helpers -----
+function applyTheme(isDark) {
+    try {
+        const html = document.documentElement;
+        if (isDark) html.classList.add('dark'); else html.classList.remove('dark');
+        // update meta theme-color so mobile UI (status bar) matches
+        const meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', isDark ? '#0b1220' : '#4CAF50');
+        const btn = document.getElementById('theme-toggle');
+        if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+    } catch (e) { console.error(e); }
+}
+
+function initTheme() {
+    // order: explicit localStorage preference -> prefers-color-scheme -> default light
+    const stored = localStorage.getItem('ll_theme'); // 'dark' | 'light' | null
+    let isDark = false;
+    if (stored === 'dark') isDark = true;
+    else if (stored === 'light') isDark = false;
+    else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) isDark = true;
+    applyTheme(isDark);
+
+    const toggle = document.getElementById('theme-toggle');
+    if (toggle) {
+        toggle.addEventListener('click', () => {
+            const currentlyDark = document.documentElement.classList.contains('dark');
+            const next = !currentlyDark;
+            applyTheme(next);
+            try { localStorage.setItem('ll_theme', next ? 'dark' : 'light'); } catch (e) { /* ignore */ }
+        });
+    }
+}
+
+// initialize theme early
+try { initTheme(); } catch (e) { /* ignore */ }
+
 function flashMessage(text, isError) {
     const container = document.createElement('div');
     container.textContent = text;
