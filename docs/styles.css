@@ -35,6 +35,9 @@ h1 {
     text-align: center;
     color: #333;
 }
+html.dark h1 { 
+    color: #e6eef6; 
+}
 
 .container {
     max-width: 760px;
