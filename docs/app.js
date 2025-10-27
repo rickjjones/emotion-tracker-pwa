@@ -1,13 +1,21 @@
-const EMOTIONS = [
-    // High Moods
-    'excitement','talkative','inflated_self_confidence','sleep_high',
-    // Low Moods
-    'energy','unmotivated','sleep_low','guilt','indecisive','crying',
-    // ADHD
-    'impulsive','absent_minded','time_management','interrupting','overwhelmed',
-    // Note
-    'note'
-];
+// Categories map: category id -> list of emotion keys
+const CATEGORIES = {
+    high: {
+        title: 'High Moods',
+        keys: ['excitement','talkative','inflated_self_confidence','sleep_high']
+    },
+    low: {
+        title: 'Low Moods',
+        keys: ['energy','unmotivated','sleep_low','guilt','indecisive','crying']
+    },
+    adhd: {
+        title: 'ADHD',
+        keys: ['impulsive','absent_minded','time_management','interrupting','overwhelmed']
+    }
+};
+
+// Flat list helper (note kept separate)
+const EMOTIONS = Object.values(CATEGORIES).reduce((acc, c) => acc.concat(c.keys), []).concat(['note']);
 
 const LABELS = {
     excitement: 'Excitement',
@@ -27,6 +35,31 @@ const LABELS = {
     overwhelmed: 'Overwhelmed',
     note: 'Note'
 };
+
+// localStorage key for tracked emotion keys
+const LS_TRACKED = 'll_tracked_emotions_v1';
+
+function getDefaultTracked() {
+    // default track all emotions except note (note always present)
+    return Object.values(CATEGORIES).reduce((acc,c)=>acc.concat(c.keys),[]);
+}
+
+function getTrackedKeys() {
+    try {
+        const raw = localStorage.getItem(LS_TRACKED);
+        if (!raw) return getDefaultTracked();
+        const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return getDefaultTracked();
+    if (parsed.length === 0) return getDefaultTracked(); // avoid an empty saved set blocking the UI
+    // ensure valid keys
+    const filtered = parsed.filter(k => EMOTIONS.includes(k));
+    return filtered.length ? filtered : getDefaultTracked();
+    } catch (e) { return getDefaultTracked(); }
+}
+
+function setTrackedKeys(keys) {
+    try { localStorage.setItem(LS_TRACKED, JSON.stringify(keys)); } catch (e) { /* ignore */ }
+}
 
 const DB_NAME = 'emotion-tracker-db';
 const STORE_NAME = 'entries';
@@ -143,7 +176,15 @@ function csvEscape(cell) {
 
 // Helper to get emotion keys for CSV (excluding 'note', then add 'note' at end)
 function getEmotionCsvKeys() {
-    return [...EMOTIONS.filter(k => k !== 'note'), 'note'];
+    // Return tracked emotion keys in category order, excluding 'note', then append 'note'
+    const tracked = new Set(getTrackedKeys());
+    const keys = [];
+    Object.values(CATEGORIES).forEach(cat => {
+        cat.keys.forEach(k => { if (tracked.has(k)) keys.push(k); });
+    });
+    // ensure uniqueness and stable order
+    const uniq = Array.from(new Set(keys));
+    return [...uniq, 'note'];
 }
 
 // Export all entries to CSV with stable headers
@@ -230,6 +271,8 @@ async function exportEntriesToJson() {
 
 function formToValues() {
     const values = {};
+    // only include tracked emotions plus note
+    const tracked = new Set(getTrackedKeys().concat(['note']));
     EMOTIONS.forEach(key => {
         const el = document.getElementById(key);
         if (!el) { values[key] = null; return; }
@@ -239,6 +282,8 @@ function formToValues() {
             values[key] = txt.length ? txt : null;
             return;
         }
+
+        if (!tracked.has(key)) { values[key] = null; return; }
 
         if (el && el.value) {
             const n = parseInt(el.value, 10);
@@ -272,6 +317,120 @@ function renderEntriesList(entries) {
     container.innerHTML = html;
 }
 
+// --- Dynamic form rendering based on categories and tracked keys ---
+function renderEmotionForm() {
+    const form = document.getElementById('emotion-form');
+    if (!form) return;
+    form.innerHTML = '';
+
+    const tracked = new Set(getTrackedKeys());
+
+    Object.entries(CATEGORIES).forEach(([catId, cat]) => {
+        // check if any key in this category is tracked
+        const has = cat.keys.some(k => tracked.has(k));
+        if (!has) return;
+        const h = document.createElement('h2');
+        h.className = `category category--${catId}`;
+        h.textContent = cat.title;
+        form.appendChild(h);
+
+        cat.keys.forEach(k => {
+            if (!tracked.has(k)) return;
+            const row = document.createElement('div');
+            row.className = 'emotion';
+            const label = document.createElement('label');
+            label.setAttribute('for', k);
+            label.textContent = LABELS[k] || k;
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.id = k;
+            input.name = k;
+            input.min = 1;
+            input.max = 10;
+            row.appendChild(label);
+            row.appendChild(input);
+            form.appendChild(row);
+        });
+    });
+
+    // note row (always present)
+    const noteRow = document.createElement('div');
+    noteRow.className = 'emotion note-row';
+    const noteLabel = document.createElement('label');
+    noteLabel.setAttribute('for', 'note');
+    noteLabel.textContent = LABELS.note || 'Note';
+    const noteField = document.createElement('textarea');
+    noteField.id = 'note';
+    noteField.name = 'note';
+    noteField.className = 'note-field';
+    noteField.rows = 3;
+    noteField.placeholder = 'Add a note...';
+    noteRow.appendChild(noteLabel);
+    noteRow.appendChild(noteField);
+    form.appendChild(noteRow);
+
+    const submit = document.createElement('button');
+    submit.type = 'submit';
+    submit.textContent = 'Save Emotions';
+    form.appendChild(submit);
+
+    // wire submit handler (existing initUI also attaches to form submit)
+}
+
+function openCategoriesModal() {
+    const modal = document.getElementById('categories-modal');
+    const list = document.getElementById('categories-list');
+    if (!modal || !list) return;
+    list.innerHTML = '';
+    const tracked = new Set(getTrackedKeys());
+
+    Object.entries(CATEGORIES).forEach(([catId, cat]) => {
+        const group = document.createElement('fieldset');
+        const legend = document.createElement('legend');
+        legend.textContent = cat.title;
+        group.appendChild(legend);
+        cat.keys.forEach(k => {
+            const id = `chk_${k}`;
+            const wrap = document.createElement('div');
+            wrap.style.display = 'flex';
+            wrap.style.alignItems = 'center';
+            wrap.style.gap = '8px';
+            const chk = document.createElement('input');
+            chk.type = 'checkbox';
+            chk.id = id;
+            chk.value = k;
+            chk.checked = tracked.has(k);
+            const lbl = document.createElement('label');
+            lbl.setAttribute('for', id);
+            lbl.textContent = LABELS[k] || k;
+            wrap.appendChild(chk);
+            wrap.appendChild(lbl);
+            group.appendChild(wrap);
+        });
+        list.appendChild(group);
+    });
+
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeCategoriesModal() {
+    const modal = document.getElementById('categories-modal');
+    if (!modal) return;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function saveCategoriesFromModal() {
+    const list = document.getElementById('categories-list');
+    if (!list) return;
+    const checked = Array.from(list.querySelectorAll('input[type="checkbox"]:checked')).map(c => c.value);
+    if (!checked || checked.length === 0) { flashMessage('Select at least one emotion to track', true); return; }
+    setTrackedKeys(checked);
+    closeCategoriesModal();
+    renderEmotionForm();
+}
+
 function escapeHtml(str) {
     return String(str).replace(/[&<>"']/g, function (s) {
         return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[s]);
@@ -280,12 +439,14 @@ function escapeHtml(str) {
 
 async function initUI() {
     const form = document.getElementById('emotion-form');
+    // render form according to tracked emotions
+    renderEmotionForm();
     if (form) {
         form.addEventListener('submit', async (ev) => {
             ev.preventDefault();
             const values = formToValues();
             await addEntry(values);
-            EMOTIONS.forEach(k => {
+        EMOTIONS.forEach(k => {
                 const el = document.getElementById(k);
                 if (el) el.value = '';
             });
@@ -294,6 +455,16 @@ async function initUI() {
             flashMessage('Saved');
         });
     }
+
+    // wire customize categories modal
+    const customize = document.getElementById('customize-emotions');
+    if (customize) customize.addEventListener('click', () => openCategoriesModal());
+    const saveBtn = document.getElementById('categories-save');
+    if (saveBtn) saveBtn.addEventListener('click', () => saveCategoriesFromModal());
+    const cancelBtn = document.getElementById('categories-cancel');
+    if (cancelBtn) cancelBtn.addEventListener('click', () => closeCategoriesModal());
+    const backdrop = document.getElementById('categories-backdrop');
+    if (backdrop) backdrop.addEventListener('click', () => closeCategoriesModal());
 
     const viewBtn = document.getElementById('view-history');
     const display = document.getElementById('emotion-display');

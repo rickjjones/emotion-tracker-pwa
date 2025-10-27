@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="styles.css">
-    <title>LifeLense</title>
+    <title>LifeLens</title>
     <meta name="theme-color" content="#4CAF50">
     <link rel="manifest" href="manifest.json"> <!-- removed leading slash -->
     <link rel="icon" href="icon-192x192.svg">    <!-- removed leading slash -->
@@ -15,79 +15,26 @@
             <h1>LifeLense</h1>
             <button id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
         </div>
-        <form id="emotion-form">
-            <h2 class="category category--high">High Moods</h2>
-            <div class="emotion">
-                <label for="excitement">Excitement:</label>
-                <input type="number" id="excitement" name="excitement" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="talkative">Talkative:</label>
-                <input type="number" id="talkative" name="talkative" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="inflated_self_confidence">Inflated self confidence:</label>
-                <input type="number" id="inflated_self_confidence" name="inflated_self_confidence" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="sleep_high">Sleep (amount):</label>
-                <input type="number" id="sleep_high" name="sleep_high" min="1" max="10">
-            </div>
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+            <button id="customize-emotions" title="Customize which emotions to track">Customize Emotions</button>
+            <span style="color:#666;font-size:0.9rem;">Select which emotions appear on the form</span>
+        </div>
 
-            <h2 class="category category--low">Low Moods</h2>
-            <div class="emotion">
-                <label for="energy">Energy:</label>
-                <input type="number" id="energy" name="energy" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="unmotivated">Unmotivated:</label>
-                <input type="number" id="unmotivated" name="unmotivated" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="sleep_low">Sleep (amount):</label>
-                <input type="number" id="sleep_low" name="sleep_low" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="guilt">Guilt:</label>
-                <input type="number" id="guilt" name="guilt" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="indecisive">Indecisive:</label>
-                <input type="number" id="indecisive" name="indecisive" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="crying">Crying:</label>
-                <input type="number" id="crying" name="crying" min="1" max="10">
-            </div>
+        <!-- The form is rendered dynamically by app.js based on selected categories/emotions -->
+        <form id="emotion-form"></form>
 
-            <h2 class="category category--adhd">ADHD</h2>
-            <div class="emotion">
-                <label for="impulsive">Impulsive:</label>
-                <input type="number" id="impulsive" name="impulsive" min="1" max="10">
+        <!-- Categories / emotion selection modal -->
+        <div id="categories-modal" class="modal" hidden aria-hidden="true">
+            <div class="modal__backdrop" id="categories-backdrop"></div>
+            <div class="modal__panel" role="dialog" aria-modal="modal__panel" aria-labelledby="categories-title">
+                <h2 id="categories-title">Choose emotions to track</h2>
+                <div id="categories-list"></div>
+                <div style="margin-top:12px;text-align:right;">
+                    <button id="categories-cancel" type="button">Cancel</button>
+                    <button id="categories-save" type="button">Save</button>
+                </div>
             </div>
-            <div class="emotion">
-                <label for="absent_minded">Absent minded:</label>
-                <input type="number" id="absent_minded" name="absent_minded" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="time_management">Time management:</label>
-                <input type="number" id="time_management" name="time_management" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="interrupting">Interrupting:</label>
-                <input type="number" id="interrupting" name="interrupting" min="1" max="10">
-            </div>
-            <div class="emotion">
-                <label for="overwhelmed">Overwhelmed:</label>
-                <input type="number" id="overwhelmed" name="overwhelmed" min="1" max="10">
-            </div>
-
-            <div class="emotion note-row">
-                <label for="note">Note:</label>
-                <textarea id="note" name="note" class="note-field" placeholder="Add a note..." rows="3"></textarea>
-            </div>
-            <button type="submit">Save Emotions</button>
-        </form>
+        </div>
 
         <div class="controls">
             <button id="view-history">View History</button>

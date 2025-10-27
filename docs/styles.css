@@ -9,6 +9,9 @@
     --card:#fafafa;
 }
 
+/* Honor the HTML hidden attribute: ensure hidden elements are not displayed */
+[hidden] { display: none !important; }
+
 /* Dark theme variables applied when .dark is on <html> */
 html.dark{
     --accent: #57d37b;
@@ -248,3 +251,16 @@ footer {
 }
 .sw-update__btn:focus { outline: 2px solid rgba(255,255,255,0.2); }
 .sw-update__msg { margin-right: 12px; }
+
+/* Categories modal */
+.modal { position: fixed; left:0; top:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; z-index:1200 }
+.modal__backdrop { position:absolute; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.45); }
+.modal__panel { position:relative; z-index:2; background:var(--panel); padding:18px; border-radius:10px; width:90%; max-width:720px; box-shadow:0 8px 40px rgba(0,0,0,0.4); }
+.modal__panel fieldset { border:0; margin:8px 0; padding:0; }
+.modal__panel legend { font-weight:700; margin-bottom:6px; }
+.modal__panel div { margin:6px 0; }
+.modal__panel label { margin:0; font-weight:500; }
+
+/* Customize button styles */
+#customize-emotions, #customize-emotions:focus { background:transparent; color:var(--text); border:1px dashed rgba(0,0,0,0.08); padding:8px 10px; border-radius:8px; }
+

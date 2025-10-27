@@ -1,6 +1,6 @@
 {
-  "name": "LifeLense",
-  "short_name": "LifeLense",
+  "name": "LifeLens",
+  "short_name": "LifeLens",
   "description": "A Progressive Web App for tracking emotions on a scale of 1 to 10.",
   "start_url": "./index.html",
   "scope": "./",
