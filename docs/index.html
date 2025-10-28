@@ -15,9 +15,30 @@
             <h1>LifeLense</h1>
             <button id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
         </div>
+
+        <!-- Categories editor modal -->
+        <div id="categories-edit-modal" class="modal" hidden aria-hidden="true">
+            <div class="modal__backdrop" id="categories-edit-backdrop"></div>
+            <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="categories-edit-title">
+                <h2 id="categories-edit-title">Edit categories and emotions</h2>
+                <div id="categories-edit-list"></div>
+                <div style="display:flex;gap:8px;margin-top:8px;">
+                    <button id="add-category" type="button">Add Category</button>
+                    <button id="reset-categories" type="button">Reset to defaults</button>
+                    <button id="export-categories" type="button">Export config</button>
+                    <button id="import-categories" type="button">Import config</button>
+                    <input type="file" id="import-categories-file" accept="application/json" style="display:none">
+                </div>
+                <div style="margin-top:12px;text-align:right;">
+                    <button id="categories-edit-cancel" type="button">Cancel</button>
+                    <button id="categories-edit-save" type="button">Save</button>
+                </div>
+            </div>
+        </div>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
             <button id="customize-emotions" title="Customize which emotions to track">Customize Emotions</button>
-            <span style="color:#666;font-size:0.9rem;">Select which emotions appear on the form</span>
+            <button id="edit-categories" title="Edit categories and emotion labels">Edit Categories</button>
+            <span style="color:#666;font-size:0.9rem;">Select which emotions appear on the form or edit categories</span>
         </div>
 
         <!-- The form is rendered dynamically by app.js based on selected categories/emotions -->

@@ -1,5 +1,5 @@
 // service worker for docs/ site (use relative paths so it works on GitHub Pages project sites)
-const CACHE_NAME = 'emotion-tracker-v22';
+const CACHE_NAME = 'emotion-tracker-v25';
 const ASSETS = [
   './',
   'index.html',

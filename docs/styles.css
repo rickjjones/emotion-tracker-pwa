@@ -256,6 +256,11 @@ footer {
 .modal { position: fixed; left:0; top:0; right:0; bottom:0; display:flex; align-items:center; justify-content:center; z-index:1200 }
 .modal__backdrop { position:absolute; left:0; top:0; right:0; bottom:0; background:rgba(0,0,0,0.45); }
 .modal__panel { position:relative; z-index:2; background:var(--panel); padding:18px; border-radius:10px; width:90%; max-width:720px; box-shadow:0 8px 40px rgba(0,0,0,0.4); }
+/* Make the categories edit modal scrollable when content is tall */
+#categories-edit-modal .modal__panel {
+    max-height: 80vh; /* stay within viewport */
+    overflow: auto;
+}
 .modal__panel fieldset { border:0; margin:8px 0; padding:0; }
 .modal__panel legend { font-weight:700; margin-bottom:6px; }
 .modal__panel div { margin:6px 0; }
@@ -263,4 +268,8 @@ footer {
 
 /* Customize button styles */
 #customize-emotions, #customize-emotions:focus { background:transparent; color:var(--text); border:1px dashed rgba(0,0,0,0.08); padding:8px 10px; border-radius:8px; }
+
+/* Categories editor micro-styling */
+.cat-edit input { padding:6px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.06); }
+.cat-edit button { padding:6px 8px; }
 
