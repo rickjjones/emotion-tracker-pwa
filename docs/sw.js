@@ -1,5 +1,5 @@
 // service worker for docs/ site (use relative paths so it works on GitHub Pages project sites)
-const CACHE_NAME = 'emotion-tracker-v25';
+const CACHE_NAME = 'emotion-tracker-v26';
 const ASSETS = [
   './',
   'index.html',
@@ -10,26 +10,24 @@ const ASSETS = [
   'icon-512x512.svg'
 ];
 
+// Install: precache assets but do NOT skipWaiting here. The new worker waits
+// until the page asks it to take over (via the update banner), so the user
+// isn't switched to new code mid-session.
 self.addEventListener('install', event => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)).then(() => self.skipWaiting())
+    caches.open(CACHE_NAME).then(cache =>
+      // cache: 'reload' bypasses the HTTP cache so we precache fresh files
+      cache.addAll(ASSETS.map(url => new Request(url, { cache: 'reload' })))
+    )
   );
 });
 
+// Activate: drop old caches and take control of open pages.
 self.addEventListener('activate', event => {
   event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k)))
-    ).then(() => self.clients.claim())
-  );
-});
-
-// Notify clients when there's a new service worker activated
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window' }).then(clients => {
-      clients.forEach(client => client.postMessage({ type: 'SW_UPDATED' }));
-    })
+    caches.keys()
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE_NAME).map(k => caches.delete(k))))
+      .then(() => self.clients.claim())
   );
 });
 
