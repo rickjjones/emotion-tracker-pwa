@@ -11,6 +11,8 @@ A small, offline-first Progressive Web App to record and review mood / behavior 
 - Light visual polish: category chips with subtle green variants, responsive layout and a centered container.
  - Customizable tracking: users can open a "Customize Emotions" modal and choose which emotions appear on the main form. Selections persist in `localStorage` so the form stays tailored between visits.
  - CSV/JSON exports respect the user's selected (tracked) emotions. CSV columns are generated in category order and always include `note` as the last column.
+ - Trends view: "View Trends" shows a dependency-free SVG line chart of the daily average for one emotion over the last 7, 30 or 90 days, with a short summary (average, range, days logged). Days without entries are bridged with a faint dashed line. The chosen emotion and range are remembered in `localStorage` (`ll_trends_v1`).
+ - Edit and delete single entries from the history list. Editing lets you change ratings, the note and the date/time; an edited entry is marked not exported so the next "Export Unsynced" picks it up.
  - The modal and its show/hide behavior are attribute-driven and styled in `docs/styles.css`. The app honors the HTML `hidden` attribute to avoid rendering the modal on page load.
 
 ## Project layout (important files)
