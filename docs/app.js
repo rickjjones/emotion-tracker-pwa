@@ -36,6 +36,9 @@ const LABELS = {
     note: 'Note'
 };
 
+// Default labels are kept separately so "Reset to defaults" can restore them.
+const DEFAULT_LABELS = Object.assign({}, LABELS);
+
 // localStorage key for tracked emotion keys
 const LS_TRACKED = 'll_tracked_emotions_v1';
 const LS_CATEGORIES = 'll_categories_v1';
@@ -50,52 +53,85 @@ function getTrackedKeys() {
         const raw = localStorage.getItem(LS_TRACKED);
         if (!raw) return getDefaultTracked();
         const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return getDefaultTracked();
-    if (parsed.length === 0) return getDefaultTracked(); // avoid an empty saved set blocking the UI
-    // ensure valid keys using effective categories (including edited ones)
-    const allKeys = getAllEmotionKeys();
-    const filtered = parsed.filter(k => allKeys.includes(k));
-    return filtered.length ? filtered : getDefaultTracked();
+        if (!Array.isArray(parsed)) return getDefaultTracked();
+        if (parsed.length === 0) return getDefaultTracked(); // avoid an empty saved set blocking the UI
+        // ensure valid keys using effective categories (including edited ones)
+        const allKeys = getAllEmotionKeys();
+        const filtered = parsed.filter(k => allKeys.includes(k));
+        return filtered.length ? filtered : getDefaultTracked();
     } catch (e) { return getDefaultTracked(); }
+}
+
+function hasSavedTracked() {
+    try { return !!localStorage.getItem(LS_TRACKED); } catch (e) { return false; }
 }
 
 function setTrackedKeys(keys) {
     try { localStorage.setItem(LS_TRACKED, JSON.stringify(keys)); } catch (e) { /* ignore */ }
 }
 
-// Editable categories persistence
+// --- Editable categories persistence ---
+// Saved shape (v2):
+//   { version: 2, categories: { <id>: { title, keys: [...] } }, labels: { <key>: <label> } }
+// The saved categories are the complete list: defaults are NOT merged back in,
+// so a category or emotion removed in the editor stays removed.
+// Older saves (a bare { <id>: { title, keys } } object) are still read.
+function normalizeCategoriesConfig(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const rawCats = (data.version === 2 && data.categories && typeof data.categories === 'object') ? data.categories : data;
+    const rawLabels = (data.version === 2 && data.labels && typeof data.labels === 'object') ? data.labels : {};
+    const categories = {};
+    Object.keys(rawCats).forEach(id => {
+        const c = rawCats[id];
+        if (!c || typeof c !== 'object' || !Array.isArray(c.keys)) return;
+        const keys = c.keys.filter(k => typeof k === 'string' && k && k !== 'note');
+        categories[id] = { title: typeof c.title === 'string' && c.title ? c.title : id, keys: Array.from(new Set(keys)) };
+    });
+    if (!Object.keys(categories).length) return null;
+    const labels = {};
+    Object.keys(rawLabels).forEach(k => { if (typeof rawLabels[k] === 'string' && rawLabels[k].trim()) labels[k] = rawLabels[k].trim(); });
+    return { version: 2, categories, labels };
+}
+
 function getSavedCategories() {
     try {
         const raw = localStorage.getItem(LS_CATEGORIES);
         if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-        return parsed;
+        return normalizeCategoriesConfig(JSON.parse(raw));
     } catch (e) { return null; }
 }
 
 function setSavedCategories(obj) {
-    try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(obj)); } catch (e) { /* ignore */ }
+    const cfg = normalizeCategoriesConfig(obj);
+    if (!cfg) return false;
+    try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(cfg)); } catch (e) { return false; }
+    applyLabels();
+    return true;
 }
 
-function resetSavedCategories() { try { localStorage.removeItem(LS_CATEGORIES); } catch(e){} }
+function resetSavedCategories() {
+    try { localStorage.removeItem(LS_CATEGORIES); } catch (e) { /* ignore */ }
+    applyLabels();
+}
 
-// Return the active categories object (saved override merged with defaults)
+// Rebuild LABELS from the defaults plus any saved custom labels.
+function applyLabels() {
+    Object.keys(LABELS).forEach(k => { delete LABELS[k]; });
+    Object.assign(LABELS, DEFAULT_LABELS);
+    const saved = getSavedCategories();
+    if (saved) Object.assign(LABELS, saved.labels);
+}
+
+function cloneCategories(cats) {
+    const out = {};
+    Object.entries(cats).forEach(([id, c]) => { out[id] = { title: c.title, keys: c.keys.slice() }; });
+    return out;
+}
+
+// Return the active categories: the saved set if there is one, otherwise the defaults.
 function loadEffectiveCategories() {
     const saved = getSavedCategories();
-    if (!saved) return CATEGORIES;
-    // merge: keep saved keys and labels; if saved category lacks keys use default
-    const out = {};
-    Object.entries(CATEGORIES).forEach(([id, def]) => {
-        if (saved[id] && Array.isArray(saved[id].keys)) {
-            out[id] = { title: (saved[id].title || def.title), keys: saved[id].keys.slice() };
-        } else {
-            out[id] = { title: def.title, keys: def.keys.slice() };
-        }
-    });
-    // include any additional saved categories
-    Object.keys(saved).forEach(k => { if (!out[k] && saved[k] && Array.isArray(saved[k].keys)) out[k] = { title: saved[k].title || k, keys: saved[k].keys.slice() }; });
-    return out;
+    return cloneCategories(saved ? saved.categories : CATEGORIES);
 }
 
 // Return flat list of emotion keys based on the effective categories (plus 'note')
@@ -103,6 +139,8 @@ function getAllEmotionKeys() {
     const cats = loadEffectiveCategories();
     return Object.values(cats).reduce((acc,c) => acc.concat(c.keys || []), []).concat(['note']);
 }
+
+applyLabels();
 
 const DB_NAME = 'emotion-tracker-db';
 const STORE_NAME = 'entries';
@@ -232,63 +270,82 @@ function getEmotionCsvKeys() {
 }
 
 // --- Categories editor UI ---
-function renderCategoriesEditor() {
+function slugify(str) {
+    return String(str || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+function makeEmotionRow(key, label) {
+    const row = document.createElement('div');
+    row.className = 'cat-edit__emotion';
+    row.style.display = 'flex';
+    row.style.gap = '8px';
+    const keyInput = document.createElement('input');
+    keyInput.className = 'cat-edit__key';
+    keyInput.value = key || '';
+    keyInput.placeholder = 'key (internal id)';
+    keyInput.setAttribute('aria-label', 'Emotion key');
+    const labelInput = document.createElement('input');
+    labelInput.className = 'cat-edit__label';
+    labelInput.value = label || '';
+    labelInput.placeholder = 'label';
+    labelInput.setAttribute('aria-label', 'Emotion label');
+    const rm = document.createElement('button');
+    rm.type = 'button'; rm.textContent = 'Remove';
+    rm.addEventListener('click', () => row.remove());
+    row.appendChild(keyInput); row.appendChild(labelInput); row.appendChild(rm);
+    return row;
+}
+
+// catId is the stable id of an existing category, or '' for a new one.
+function makeCategoryPanel(catId, cat, labels) {
+    labels = labels || LABELS;
+    const panel = document.createElement('div');
+    panel.className = 'cat-edit';
+    panel.dataset.catId = catId || '';
+    panel.style.border = '1px solid rgba(0,0,0,0.06)';
+    panel.style.padding = '8px';
+    panel.style.margin = '8px 0';
+
+    const titleRow = document.createElement('div');
+    titleRow.style.display = 'flex';
+    titleRow.style.gap = '8px';
+    const titleInput = document.createElement('input');
+    titleInput.className = 'cat-edit__title';
+    titleInput.value = cat ? (cat.title || catId) : '';
+    titleInput.placeholder = 'Category title';
+    titleInput.setAttribute('aria-label', 'Category title');
+    titleRow.appendChild(titleInput);
+
+    const removeCatBtn = document.createElement('button');
+    removeCatBtn.textContent = 'Remove category';
+    removeCatBtn.type = 'button';
+    removeCatBtn.addEventListener('click', () => { panel.remove(); });
+    titleRow.appendChild(removeCatBtn);
+    panel.appendChild(titleRow);
+
+    const keysContainer = document.createElement('div');
+    keysContainer.className = 'cat-edit__emotions';
+    ((cat && cat.keys) || []).forEach(k => keysContainer.appendChild(makeEmotionRow(k, labels[k] || k)));
+    panel.appendChild(keysContainer);
+
+    const addKeyBtn = document.createElement('button');
+    addKeyBtn.type = 'button';
+    addKeyBtn.textContent = 'Add emotion';
+    addKeyBtn.addEventListener('click', () => {
+        const row = makeEmotionRow('', '');
+        keysContainer.appendChild(row);
+        row.querySelector('input').focus();
+    });
+    panel.appendChild(addKeyBtn);
+    return panel;
+}
+
+function renderCategoriesEditor(cats, labels) {
     const list = document.getElementById('categories-edit-list');
     if (!list) return;
     list.innerHTML = '';
-    const cats = loadEffectiveCategories();
-    Object.entries(cats).forEach(([catId, cat]) => {
-        const panel = document.createElement('div');
-        panel.className = 'cat-edit';
-        panel.style.border = '1px solid rgba(0,0,0,0.06)';
-        panel.style.padding = '8px';
-        panel.style.margin = '8px 0';
-
-        const titleRow = document.createElement('div');
-        titleRow.style.display = 'flex';
-        titleRow.style.gap = '8px';
-        const titleInput = document.createElement('input');
-        titleInput.value = cat.title || catId;
-        titleInput.dataset.catId = catId;
-        titleInput.placeholder = 'Category title';
-        titleRow.appendChild(titleInput);
-
-        const removeCatBtn = document.createElement('button');
-        removeCatBtn.textContent = 'Remove category';
-        removeCatBtn.type = 'button';
-        removeCatBtn.addEventListener('click', () => { panel.remove(); });
-        titleRow.appendChild(removeCatBtn);
-
-        panel.appendChild(titleRow);
-
-        const keysContainer = document.createElement('div');
-        cat.keys.forEach(k => {
-            const row = document.createElement('div');
-            row.style.display = 'flex';
-            row.style.gap = '8px';
-            const keyInput = document.createElement('input');
-            keyInput.value = k;
-            keyInput.placeholder = 'key (internal id)';
-            const labelInput = document.createElement('input');
-            labelInput.value = LABELS[k] || k;
-            labelInput.placeholder = 'label';
-            const rm = document.createElement('button'); rm.type='button'; rm.textContent='Remove'; rm.addEventListener('click', () => row.remove());
-            row.appendChild(keyInput); row.appendChild(labelInput); row.appendChild(rm);
-            keysContainer.appendChild(row);
-        });
-
-        const addKeyBtn = document.createElement('button'); addKeyBtn.type='button'; addKeyBtn.textContent='Add emotion'; addKeyBtn.addEventListener('click', () => {
-            const row = document.createElement('div'); row.style.display='flex'; row.style.gap='8px';
-            const keyInput = document.createElement('input'); keyInput.placeholder='key (internal id)';
-            const labelInput = document.createElement('input'); labelInput.placeholder='label';
-            const rm = document.createElement('button'); rm.type='button'; rm.textContent='Remove'; rm.addEventListener('click', () => row.remove());
-            row.appendChild(keyInput); row.appendChild(labelInput); row.appendChild(rm);
-            keysContainer.appendChild(row);
-        });
-
-        panel.appendChild(keysContainer);
-        panel.appendChild(addKeyBtn);
-        list.appendChild(panel);
+    Object.entries(cats || loadEffectiveCategories()).forEach(([catId, cat]) => {
+        list.appendChild(makeCategoryPanel(catId, cat, labels));
     });
 }
 
@@ -303,46 +360,63 @@ function closeCategoriesEditModal() {
     const modal = document.getElementById('categories-edit-modal'); if (!modal) return; modal.hidden = true; modal.setAttribute('aria-hidden','true');
 }
 
+function uniqueCategoryId(base, taken) {
+    let id = base || 'category';
+    if (!taken.has(id)) return id;
+    let n = 2;
+    while (taken.has(id + '_' + n)) n++;
+    return id + '_' + n;
+}
+
 function saveCategoriesEditModal() {
     const list = document.getElementById('categories-edit-list'); if (!list) return;
-    const panels = Array.from(list.children);
-    const out = {};
-    panels.forEach(panel => {
-        const titleInput = panel.querySelector('input[placeholder="Category title"]') || panel.querySelector('input');
-        const title = titleInput ? titleInput.value.trim() : '';
-        const keyRows = Array.from(panel.querySelectorAll('div > div, div')).filter(n => n.querySelectorAll); // best effort
+    const panels = Array.from(list.querySelectorAll('.cat-edit'));
+    const categories = {};
+    const labels = {};
+    // existing panels keep their ids; reserve them before naming new panels
+    const taken = new Set(panels.map(p => p.dataset.catId).filter(Boolean));
+
+    for (const panel of panels) {
+        const title = (panel.querySelector('.cat-edit__title').value || '').trim();
         const keys = [];
-        // gather inputs inside panel (all input pairs)
-        const inputs = panel.querySelectorAll('input');
-        const catIdRaw = (title || '').toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        for (let i=1;i<inputs.length;i+=2) {
-            const key = (inputs[i-1].value || '').trim();
-            const label = (inputs[i].value || '').trim();
-            if (key) { keys.push(key); LABELS[key] = label || key; }
-        }
-        if (keys.length) out[catIdRaw || ('cat_' + Math.random().toString(36).slice(2,8))] = { title: title || catIdRaw, keys };
-    });
-    // persist and re-render
-    // validate for duplicate keys
-    const allKeys = Object.values(out).reduce((acc,c) => acc.concat(c.keys), []);
+        panel.querySelectorAll('.cat-edit__emotion').forEach(row => {
+            const label = (row.querySelector('.cat-edit__label').value || '').trim();
+            const key = slugify(row.querySelector('.cat-edit__key').value) || slugify(label);
+            if (!key) return;
+            keys.push(key);
+            if (label && label !== DEFAULT_LABELS[key]) labels[key] = label;
+            else if (!label && !DEFAULT_LABELS[key]) labels[key] = key;
+        });
+        if (!keys.length) continue; // empty categories are dropped
+        let id = panel.dataset.catId;
+        if (!id) { id = uniqueCategoryId(slugify(title), taken); taken.add(id); }
+        categories[id] = { title: title || id, keys };
+    }
+
+    if (!Object.keys(categories).length) { flashMessage('Add at least one emotion', true); return; }
+    const allKeys = Object.values(categories).reduce((acc,c) => acc.concat(c.keys), []);
+    if (allKeys.includes('note')) { flashMessage('"note" is reserved', true); return; }
     const dup = allKeys.filter((v,i,a) => a.indexOf(v) !== i);
     if (dup.length) { flashMessage('Duplicate keys found: ' + Array.from(new Set(dup)).join(', '), true); return; }
 
-    // warn if relabeling existing keys (simple detection)
+    // warn if keys were added or renamed (existing entries are stored by key)
     const prevKeys = getAllEmotionKeys();
-    const renamed = allKeys.filter(k => prevKeys.includes(k) === false);
-    if (renamed.length) {
-        // polite warning but allow saving
+    const added = allKeys.filter(k => !prevKeys.includes(k));
+    if (added.length) {
         if (!confirm('You added or renamed keys. Existing stored entries may not map to the new keys. Continue?')) return;
     }
 
-    setSavedCategories(out);
+    const prevTracked = hasSavedTracked() ? getTrackedKeys() : null;
+    if (!setSavedCategories({ version: 2, categories, labels })) { flashMessage('Could not save categories', true); return; }
+    // newly added emotions should show up on the form, not be hidden by an old tracked list
+    if (prevTracked) setTrackedKeys(Array.from(new Set(prevTracked.concat(added))).filter(k => allKeys.includes(k)));
     closeCategoriesEditModal();
     renderEmotionForm();
+    flashMessage('Categories saved');
 }
 
 function exportCategoriesConfig() {
-    const cats = getSavedCategories() || CATEGORIES;
+    const cats = getSavedCategories() || { version: 2, categories: cloneCategories(CATEGORIES), labels: {} };
     const blob = new Blob([JSON.stringify(cats, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'categories-config.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
@@ -351,11 +425,11 @@ function exportCategoriesConfig() {
 async function importCategoriesConfigFile(file) {
     try {
         const text = await file.text();
-        const data = JSON.parse(text);
-        // basic shape check
-        if (typeof data !== 'object' || Array.isArray(data)) { flashMessage('Invalid config file', true); return; }
+        const data = normalizeCategoriesConfig(JSON.parse(text));
+        if (!data) { flashMessage('Invalid config file', true); return; }
         setSavedCategories(data);
         renderCategoriesEditor();
+        renderEmotionForm();
         flashMessage('Imported categories');
     } catch (e) { flashMessage('Import failed', true); }
 }
@@ -662,28 +736,15 @@ async function initUI() {
     if (editBackdrop) editBackdrop.addEventListener('click', () => closeCategoriesEditModal());
     const addCat = document.getElementById('add-category');
     if (addCat) addCat.addEventListener('click', () => {
-        // append an empty panel and re-render to allow editing
         const list = document.getElementById('categories-edit-list');
         if (!list) return;
-        const panel = document.createElement('div'); panel.className='cat-edit'; panel.style.border='1px solid rgba(0,0,0,0.06)'; panel.style.padding='8px'; panel.style.margin='8px 0';
-        const titleRow = document.createElement('div'); titleRow.style.display='flex'; titleRow.style.gap='8px';
-        const titleInput = document.createElement('input'); titleInput.placeholder='Category title'; titleRow.appendChild(titleInput);
-        const removeCatBtn = document.createElement('button'); removeCatBtn.textContent='Remove category'; removeCatBtn.type='button'; removeCatBtn.addEventListener('click', () => panel.remove()); titleRow.appendChild(removeCatBtn);
-        panel.appendChild(titleRow);
-        const keysContainer = document.createElement('div'); panel.appendChild(keysContainer);
-        const addKeyBtn = document.createElement('button'); addKeyBtn.type='button'; addKeyBtn.textContent='Add emotion'; addKeyBtn.addEventListener('click', () => {
-            const row = document.createElement('div'); row.style.display='flex'; row.style.gap='8px';
-            const keyInput = document.createElement('input'); keyInput.placeholder='key (internal id)';
-            const labelInput = document.createElement('input'); labelInput.placeholder='label';
-            const rm = document.createElement('button'); rm.type='button'; rm.textContent='Remove'; rm.addEventListener('click', () => row.remove());
-            row.appendChild(keyInput); row.appendChild(labelInput); row.appendChild(rm);
-            keysContainer.appendChild(row);
-        });
-        panel.appendChild(addKeyBtn);
+        const panel = makeCategoryPanel('', null);
         list.appendChild(panel);
+        panel.querySelector('.cat-edit__title').focus();
     });
     const resetBtn = document.getElementById('reset-categories');
-    if (resetBtn) resetBtn.addEventListener('click', () => { resetSavedCategories(); renderCategoriesEditor(); flashMessage('Reset to defaults'); });
+    // Reset only refills the editor; nothing is stored until Save.
+    if (resetBtn) resetBtn.addEventListener('click', () => { renderCategoriesEditor(cloneCategories(CATEGORIES), DEFAULT_LABELS); flashMessage('Defaults restored. Press Save to keep them.'); });
     const exportBtn = document.getElementById('export-categories');
     if (exportBtn) exportBtn.addEventListener('click', () => exportCategoriesConfig());
     const importCatsBtn = document.getElementById('import-categories');
