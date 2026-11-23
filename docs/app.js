@@ -195,20 +195,26 @@ async function clearAllEntries() {
     });
 }
 
+// Turn one item from an imported JSON file into a record to store.
+// Accepts full exported records ({ timestamp, values, exported }) or a bare values object.
+function normalizeImportRecord(item) {
+    return {
+        timestamp: item.timestamp || Date.now(),
+        values: item.values || item,
+        exported: item.exported || false
+    };
+}
+
 async function importEntriesFromArray(arr) {
     if (!Array.isArray(arr)) throw new Error('Invalid import format');
+    // validate everything before writing, so a bad item can't leave a partial import behind
+    if (arr.some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error('Invalid import format');
+    const records = arr.map(normalizeImportRecord);
     const db = await openDb();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        arr.forEach(item => {
-            const record = {
-                timestamp: item.timestamp || Date.now(),
-                values: item.values || item,
-                exported: item.exported || false
-            };
-            store.add(record);
-        });
+        records.forEach(record => store.add(record));
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
     });
@@ -283,6 +289,21 @@ function csvEscape(cell) {
         return '"' + s.replace(/"/g, '""') + '"';
     }
     return s;
+}
+
+// Build a CSV document (CRLF line endings) for the given entries and emotion columns
+function buildCsv(entries, keys) {
+    const headers = ['timestamp', 'id', ...keys];
+    const rows = (entries || []).map(e => {
+        const vals = e.values || {};
+        const row = [new Date(e.timestamp).toISOString(), e.id || ''];
+        keys.forEach(k => {
+            const v = vals[k];
+            row.push(v === null || typeof v === 'undefined' ? '' : v);
+        });
+        return row.map(csvEscape).join(',');
+    });
+    return [headers.map(csvEscape).join(','), ...rows].join('\r\n');
 }
 
 // Helper to get emotion keys for CSV (excluding 'note', then add 'note' at end)
@@ -484,20 +505,7 @@ async function exportEntriesToCsv() {
         return;
     }
 
-    const headers = ['timestamp', 'id', ...getEmotionCsvKeys()];
-    const rows = entries.map(e => {
-        const row = [];
-        row.push(new Date(e.timestamp).toISOString());
-        row.push(e.id || '');
-        const vals = e.values || {};
-        getEmotionCsvKeys().forEach(k => {
-            const v = vals[k];
-            row.push(v === null || typeof v === 'undefined' ? '' : v);
-        });
-        return row.map(csvEscape).join(',');
-    });
-
-    const csv = [headers.map(csvEscape).join(','), ...rows].join('\r\n');
+    const csv = buildCsv(entries, getEmotionCsvKeys());
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -516,20 +524,7 @@ async function exportUnsyncedToCsv() {
         flashMessage('No unsynced entries to export', true);
         return;
     }
-    const headers = ['timestamp', 'id', ...getEmotionCsvKeys()];
-    const rows = unsynced.map(e => {
-        const row = [];
-        row.push(new Date(e.timestamp).toISOString());
-        row.push(e.id || '');
-        const vals = e.values || {};
-        getEmotionCsvKeys().forEach(k => {
-            const v = vals[k];
-            row.push(v === null || typeof v === 'undefined' ? '' : v);
-        });
-        return row.map(csvEscape).join(',');
-    });
-
-    const csv = [headers.map(csvEscape).join(','), ...rows].join('\r\n');
+    const csv = buildCsv(unsynced, getEmotionCsvKeys());
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -1089,8 +1084,9 @@ function initTrends() {
 }
 
 // Build per-day averages for one emotion over the last `days` days (today included)
-function computeDailySeries(entries, key, days) {
-    const today = new Date();
+// `now` defaults to the current time; tests pass a fixed value.
+function computeDailySeries(entries, key, days, now) {
+    const today = new Date(typeof now === 'number' ? now : Date.now());
     const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
     const buckets = new Map();
     (entries || []).forEach(e => {
@@ -1137,16 +1133,23 @@ function renderTrends(entries) {
     const series = computeDailySeries(entries, key, prefs.days);
     chart.innerHTML = buildTrendSvg(series, LABELS[key] || key, chart.clientWidth);
 
-    const withVals = series.filter(p => p.avg !== null);
-    if (!withVals.length) {
+    const st = summarizeSeries(series);
+    if (!st) {
         summary.textContent = `No ${LABELS[key] || key} ratings in the last ${prefs.days} days.`;
         return;
     }
+    summary.textContent = `Average ${st.avg.toFixed(1)} · range ${st.min}–${st.max} · ${st.total} ${st.total === 1 ? 'rating' : 'ratings'} on ${st.daysWithData} of ${prefs.days} days`;
+}
+
+// Overall stats for a daily series: rating-weighted average, min, max, counts. null if no data.
+function summarizeSeries(series) {
+    const withVals = (series || []).filter(p => p.avg !== null);
+    if (!withVals.length) return null;
     const total = withVals.reduce((a, p) => a + p.count, 0);
     const avg = withVals.reduce((a, p) => a + p.avg * p.count, 0) / total;
-    const lo = Math.min(...withVals.map(p => p.min));
-    const hi = Math.max(...withVals.map(p => p.max));
-    summary.textContent = `Average ${avg.toFixed(1)} · range ${lo}–${hi} · ${total} ${total === 1 ? 'rating' : 'ratings'} on ${withVals.length} of ${prefs.days} days`;
+    let min = Infinity, max = -Infinity;
+    withVals.forEach(p => { if (p.min < min) min = p.min; if (p.max > max) max = p.max; });
+    return { avg, min, max, total, daysWithData: withVals.length };
 }
 
 // Dependency-free SVG line chart; scale is fixed at 1–10. Gaps in the data break the line.
