@@ -11,6 +11,8 @@ A small, offline-first Progressive Web App to record and review mood / behavior 
 - Light visual polish: category chips with subtle green variants, responsive layout and a centered container.
  - Customizable tracking: users can open a "Customize Emotions" modal and choose which emotions appear on the main form. Selections persist in `localStorage` so the form stays tailored between visits.
  - CSV/JSON exports respect the user's selected (tracked) emotions. CSV columns are generated in category order and always include `note` as the last column.
+ - Trends view: "View Trends" shows a dependency-free SVG line chart of the daily average for one emotion over the last 7, 30 or 90 days, with a short summary (average, range, days logged). Days without entries are bridged with a faint dashed line. The chosen emotion and range are remembered in `localStorage` (`ll_trends_v1`).
+ - Edit and delete single entries from the history list. Editing lets you change ratings, the note and the date/time; an edited entry is marked not exported so the next "Export Unsynced" picks it up.
  - The modal and its show/hide behavior are attribute-driven and styled in `docs/styles.css`. The app honors the HTML `hidden` attribute to avoid rendering the modal on page load.
 
 ## Project layout (important files)
@@ -23,9 +25,9 @@ emotion-tracker-pwa/
 │   ├── sw.js              # Service worker (precache + runtime caching)
 │   ├── manifest.json      # PWA manifest
 │   └── icon-*.svg         # App icons used by the manifest
+├── test/                  # Unit tests (Node's built-in runner, Right BICEP)
 ├── README.md              # This document
-├── package.json           # Optional (if you add tooling)
-└── src/                   # (unused / original source folder)
+└── package.json           # Dev tooling only (tests); the app itself has no dependencies
 ```
 
 ## Quick start (local)
@@ -48,6 +50,34 @@ emotion-tracker-pwa/
 - Service worker: `docs/sw.js` precaches core assets and supports an update flow — when a new SW version is installed, the page shows an update banner allowing users to reload and activate the new version immediately.
  - Customization: the main form is rendered dynamically from a category/emotion structure in `docs/app.js`. Open "Customize Emotions" to pick individual emotions; choices are saved under the `localStorage` key `ll_tracked_emotions_v1`. The app prevents saving an empty tracked set and falls back to a sensible default if the saved value is empty or invalid.
  - Exports: CSV export uses only the tracked emotions (plus `note`) and produces stable headers. JSON export includes the full stored entries as-is.
+
+## Running the tests
+The app ships with no dependencies. Tests use Node's built-in test runner (Node 22+) plus one dev-only package, `fake-indexeddb`.
+
+```
+npm install
+npm test
+```
+
+`test/helpers/load-app.js` loads `docs/app.js` into an isolated VM with an in-memory `localStorage`, a stub `document` and a fake IndexedDB, so the real app file is tested as shipped. Tests run on every push and pull request via GitHub Actions.
+
+Each test file groups its cases by the **Right BICEP** heuristic:
+
+| Letter | Question | Examples |
+| --- | --- | --- |
+| **R**ight | Are the results right? | CSV columns and rows, daily averages, saved labels |
+| **B**oundary | Are the edges handled (CORRECT: Conformance, Ordering, Range, Reference, Existence, Cardinality, Time)? | DST days, window start/end to the millisecond, empty imports, null values, old config shape |
+| **I**nverse | Can the result be undone or reversed? | CSV parse(escape(x)) == x, JSON export → import, save → reset |
+| **C**ross-check | Does another method agree? | Brute-force average vs. the summary, unsynced + exported = all |
+| **E**rror | Are errors handled? | Corrupt or unavailable `localStorage`, bad import files, a database that won't open |
+| **P**erformance | Is it fast enough? | 50k entries averaged, 10k-row CSV, 5k-entry import |
+
+| File | Covers |
+| --- | --- |
+| `test/csv.test.js` | `csvEscape`, `buildCsv`, CSV column selection |
+| `test/categories.test.js` | Category/label persistence, defaults, tracked emotions, editor helpers |
+| `test/trends.test.js` | `computeDailySeries` over 7/30/90 days, `summarizeSeries`, chart SVG, date helpers, trend prefs |
+| `test/storage.test.js` | IndexedDB CRUD, JSON import/export round trips, unsynced-export flags |
 
 ## Styling notes
 - Category headings are styled as chips and use subtle green variants via `category--high`, `category--low`, and `category--adhd` classes in `docs/styles.css`.

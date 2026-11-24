@@ -36,6 +36,126 @@ const LABELS = {
     note: 'Note'
 };
 
+// Default labels are kept separately so "Reset to defaults" can restore them.
+const DEFAULT_LABELS = Object.assign({}, LABELS);
+
+// Shown above the rating form so the 1-10 scale has fixed anchors
+const SCALE_HINT = 'Rate each from 1 (not at all) to 10 (extremely). Skip any you don\'t want to rate, and tap a number again to clear it.';
+
+// Wording for the Clear All confirmation: say how much will be lost and how to keep it.
+function clearAllConfirmText(count) {
+    const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+    if (n === 0) return 'There are no entries to delete.';
+    const what = n === 1 ? 'your 1 entry' : `all ${n} entries`;
+    return `Delete ${what}? This cannot be undone. Export your entries first if you want a backup.`;
+}
+
+// ----- Rating scale, draft autosave, post-save summary -----
+
+// Build a 1-10 tap scale. The value lives in a hidden input with id `inputId`
+// (and data-key), so code that reads inputs by id keeps working. Native radios
+// give arrow-key navigation for free; tapping the selected number clears it.
+function buildRatingScale(key, inputId, labelId, value) {
+    const wrap = document.createElement('div');
+    wrap.className = 'scale';
+    wrap.setAttribute('role', 'radiogroup');
+    wrap.setAttribute('aria-labelledby', labelId);
+    wrap.setAttribute('aria-describedby', 'scale-hint');
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.id = inputId;
+    hidden.name = inputId;
+    hidden.dataset.key = key;
+    hidden.value = value === null || typeof value === 'undefined' ? '' : String(value);
+    wrap.appendChild(hidden);
+    for (let n = 1; n <= 10; n++) {
+        const opt = document.createElement('label');
+        opt.className = 'scale__opt';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'r_' + inputId;
+        radio.value = String(n);
+        radio.checked = hidden.value === String(n);
+        radio.setAttribute('aria-label', String(n));
+        radio.addEventListener('click', () => {
+            if (hidden.value === radio.value) { radio.checked = false; hidden.value = ''; }
+            else hidden.value = radio.value;
+            hidden.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        const face = document.createElement('span');
+        face.textContent = String(n);
+        face.setAttribute('aria-hidden', 'true');
+        opt.appendChild(radio);
+        opt.appendChild(face);
+        wrap.appendChild(opt);
+    }
+    return wrap;
+}
+
+// Set a scale built by buildRatingScale to `value` (null clears it).
+function setScaleValue(inputId, value) {
+    const hidden = document.getElementById(inputId);
+    if (!hidden) return;
+    const v = value === null || typeof value === 'undefined' ? '' : String(value);
+    hidden.value = v;
+    document.querySelectorAll(`input[name="r_${inputId}"]`).forEach(r => { r.checked = r.value === v; });
+}
+
+const LS_DRAFT = 'll_draft_v1';
+const DRAFT_MAX_AGE_MS = 12 * 60 * 60 * 1000; // an older draft is probably stale
+
+// True if a values object holds at least one rating or a note.
+function hasDraftContent(values) {
+    if (!values || typeof values !== 'object') return false;
+    return Object.entries(values).some(([k, v]) => k === 'note'
+        ? typeof v === 'string' && v.trim().length > 0
+        : typeof v === 'number' && Number.isFinite(v));
+}
+
+// Keep unsaved form values so a reload or update doesn't lose them. Empty values remove the draft.
+function saveDraft(values, now) {
+    try {
+        if (!hasDraftContent(values)) { localStorage.removeItem(LS_DRAFT); return false; }
+        localStorage.setItem(LS_DRAFT, JSON.stringify({ savedAt: typeof now === 'number' ? now : Date.now(), values }));
+        return true;
+    } catch (e) { return false; }
+}
+
+// The saved draft's values, or null if none, unreadable, empty or older than DRAFT_MAX_AGE_MS.
+function loadDraft(now) {
+    try {
+        const d = JSON.parse(localStorage.getItem(LS_DRAFT) || 'null');
+        if (!d || typeof d.savedAt !== 'number' || !d.values || typeof d.values !== 'object') return null;
+        const t = typeof now === 'number' ? now : Date.now();
+        if (t - d.savedAt > DRAFT_MAX_AGE_MS || d.savedAt > t + 60000) return null;
+        return hasDraftContent(d.values) ? d.values : null;
+    } catch (e) { return null; }
+}
+
+function clearDraft() {
+    try { localStorage.removeItem(LS_DRAFT); } catch (e) { /* ignore */ }
+}
+
+// e.g. "Saved 2 ratings and a note at 9:14 PM."
+function savedSummaryText(values, ts) {
+    const vals = values || {};
+    const ratings = Object.entries(vals).filter(([k, v]) => k !== 'note' && typeof v === 'number' && Number.isFinite(v)).length;
+    const hasNote = typeof vals.note === 'string' && vals.note.trim().length > 0;
+    const parts = [];
+    if (ratings) parts.push(ratings === 1 ? '1 rating' : `${ratings} ratings`);
+    if (hasNote) parts.push('a note');
+    const what = parts.length ? parts.join(' and ') : 'an empty entry';
+    const time = new Date(typeof ts === 'number' ? ts : Date.now()).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return `Saved ${what} at ${time}.`;
+}
+
+// Used by the update banner: don't auto-reload over a half-filled form.
+function hasUnsavedInput() {
+    const form = document.getElementById('emotion-form');
+    if (!form || form.hidden) return false;
+    return hasDraftContent(formToValues());
+}
+
 // localStorage key for tracked emotion keys
 const LS_TRACKED = 'll_tracked_emotions_v1';
 const LS_CATEGORIES = 'll_categories_v1';
@@ -50,52 +170,85 @@ function getTrackedKeys() {
         const raw = localStorage.getItem(LS_TRACKED);
         if (!raw) return getDefaultTracked();
         const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return getDefaultTracked();
-    if (parsed.length === 0) return getDefaultTracked(); // avoid an empty saved set blocking the UI
-    // ensure valid keys using effective categories (including edited ones)
-    const allKeys = getAllEmotionKeys();
-    const filtered = parsed.filter(k => allKeys.includes(k));
-    return filtered.length ? filtered : getDefaultTracked();
+        if (!Array.isArray(parsed)) return getDefaultTracked();
+        if (parsed.length === 0) return getDefaultTracked(); // avoid an empty saved set blocking the UI
+        // ensure valid keys using effective categories (including edited ones)
+        const allKeys = getAllEmotionKeys();
+        const filtered = parsed.filter(k => allKeys.includes(k));
+        return filtered.length ? filtered : getDefaultTracked();
     } catch (e) { return getDefaultTracked(); }
+}
+
+function hasSavedTracked() {
+    try { return !!localStorage.getItem(LS_TRACKED); } catch (e) { return false; }
 }
 
 function setTrackedKeys(keys) {
     try { localStorage.setItem(LS_TRACKED, JSON.stringify(keys)); } catch (e) { /* ignore */ }
 }
 
-// Editable categories persistence
+// --- Editable categories persistence ---
+// Saved shape (v2):
+//   { version: 2, categories: { <id>: { title, keys: [...] } }, labels: { <key>: <label> } }
+// The saved categories are the complete list: defaults are NOT merged back in,
+// so a category or emotion removed in the editor stays removed.
+// Older saves (a bare { <id>: { title, keys } } object) are still read.
+function normalizeCategoriesConfig(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const rawCats = (data.version === 2 && data.categories && typeof data.categories === 'object') ? data.categories : data;
+    const rawLabels = (data.version === 2 && data.labels && typeof data.labels === 'object') ? data.labels : {};
+    const categories = {};
+    Object.keys(rawCats).forEach(id => {
+        const c = rawCats[id];
+        if (!c || typeof c !== 'object' || !Array.isArray(c.keys)) return;
+        const keys = c.keys.filter(k => typeof k === 'string' && k && k !== 'note');
+        categories[id] = { title: typeof c.title === 'string' && c.title ? c.title : id, keys: Array.from(new Set(keys)) };
+    });
+    if (!Object.keys(categories).length) return null;
+    const labels = {};
+    Object.keys(rawLabels).forEach(k => { if (typeof rawLabels[k] === 'string' && rawLabels[k].trim()) labels[k] = rawLabels[k].trim(); });
+    return { version: 2, categories, labels };
+}
+
 function getSavedCategories() {
     try {
         const raw = localStorage.getItem(LS_CATEGORIES);
         if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-        return parsed;
+        return normalizeCategoriesConfig(JSON.parse(raw));
     } catch (e) { return null; }
 }
 
 function setSavedCategories(obj) {
-    try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(obj)); } catch (e) { /* ignore */ }
+    const cfg = normalizeCategoriesConfig(obj);
+    if (!cfg) return false;
+    try { localStorage.setItem(LS_CATEGORIES, JSON.stringify(cfg)); } catch (e) { return false; }
+    applyLabels();
+    return true;
 }
 
-function resetSavedCategories() { try { localStorage.removeItem(LS_CATEGORIES); } catch(e){} }
+function resetSavedCategories() {
+    try { localStorage.removeItem(LS_CATEGORIES); } catch (e) { /* ignore */ }
+    applyLabels();
+}
 
-// Return the active categories object (saved override merged with defaults)
+// Rebuild LABELS from the defaults plus any saved custom labels.
+function applyLabels() {
+    Object.keys(LABELS).forEach(k => { delete LABELS[k]; });
+    Object.assign(LABELS, DEFAULT_LABELS);
+    const saved = getSavedCategories();
+    if (saved) Object.assign(LABELS, saved.labels);
+}
+
+function cloneCategories(cats) {
+    const out = {};
+    Object.entries(cats).forEach(([id, c]) => { out[id] = { title: c.title, keys: c.keys.slice() }; });
+    return out;
+}
+
+// Return the active categories: the saved set if there is one, otherwise the defaults.
 function loadEffectiveCategories() {
     const saved = getSavedCategories();
-    if (!saved) return CATEGORIES;
-    // merge: keep saved keys and labels; if saved category lacks keys use default
-    const out = {};
-    Object.entries(CATEGORIES).forEach(([id, def]) => {
-        if (saved[id] && Array.isArray(saved[id].keys)) {
-            out[id] = { title: (saved[id].title || def.title), keys: saved[id].keys.slice() };
-        } else {
-            out[id] = { title: def.title, keys: def.keys.slice() };
-        }
-    });
-    // include any additional saved categories
-    Object.keys(saved).forEach(k => { if (!out[k] && saved[k] && Array.isArray(saved[k].keys)) out[k] = { title: saved[k].title || k, keys: saved[k].keys.slice() }; });
-    return out;
+    return cloneCategories(saved ? saved.categories : CATEGORIES);
 }
 
 // Return flat list of emotion keys based on the effective categories (plus 'note')
@@ -103,6 +256,8 @@ function getAllEmotionKeys() {
     const cats = loadEffectiveCategories();
     return Object.values(cats).reduce((acc,c) => acc.concat(c.keys || []), []).concat(['note']);
 }
+
+applyLabels();
 
 const DB_NAME = 'emotion-tracker-db';
 const STORE_NAME = 'entries';
@@ -157,20 +312,56 @@ async function clearAllEntries() {
     });
 }
 
+// Turn one item from an imported JSON file into a record to store.
+// Accepts full exported records ({ timestamp, values, exported }) or a bare values object.
+function normalizeImportRecord(item) {
+    return {
+        timestamp: item.timestamp || Date.now(),
+        values: item.values || item,
+        exported: item.exported || false
+    };
+}
+
 async function importEntriesFromArray(arr) {
     if (!Array.isArray(arr)) throw new Error('Invalid import format');
+    // validate everything before writing, so a bad item can't leave a partial import behind
+    if (arr.some(item => !item || typeof item !== 'object' || Array.isArray(item))) throw new Error('Invalid import format');
+    const records = arr.map(normalizeImportRecord);
     const db = await openDb();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        arr.forEach(item => {
-            const record = {
-                timestamp: item.timestamp || Date.now(),
-                values: item.values || item,
-                exported: item.exported || false
-            };
-            store.add(record);
-        });
+        records.forEach(record => store.add(record));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+async function getEntry(id) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+        const req = db.transaction(STORE_NAME, 'readonly').objectStore(STORE_NAME).get(id);
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+    });
+}
+
+// Replace an existing record (must include its id)
+async function updateEntry(record) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).put(record);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+
+async function deleteEntry(id) {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(STORE_NAME, 'readwrite');
+        tx.objectStore(STORE_NAME).delete(id);
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
     });
@@ -217,6 +408,21 @@ function csvEscape(cell) {
     return s;
 }
 
+// Build a CSV document (CRLF line endings) for the given entries and emotion columns
+function buildCsv(entries, keys) {
+    const headers = ['timestamp', 'id', ...keys];
+    const rows = (entries || []).map(e => {
+        const vals = e.values || {};
+        const row = [new Date(e.timestamp).toISOString(), e.id || ''];
+        keys.forEach(k => {
+            const v = vals[k];
+            row.push(v === null || typeof v === 'undefined' ? '' : v);
+        });
+        return row.map(csvEscape).join(',');
+    });
+    return [headers.map(csvEscape).join(','), ...rows].join('\r\n');
+}
+
 // Helper to get emotion keys for CSV (excluding 'note', then add 'note' at end)
 function getEmotionCsvKeys() {
     // Return tracked emotion keys in category order, excluding 'note', then append 'note'
@@ -232,63 +438,104 @@ function getEmotionCsvKeys() {
 }
 
 // --- Categories editor UI ---
-function renderCategoriesEditor() {
+function slugify(str) {
+    return String(str || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+}
+
+// One emotion in the Manage emotions dialog: show-on-form switch, label, optional key, remove.
+function makeEmotionRow(key, label, visible) {
+    const row = document.createElement('div');
+    row.className = 'cat-edit__emotion';
+    row.dataset.origKey = key || '';
+    const show = document.createElement('input');
+    show.type = 'checkbox';
+    show.className = 'cat-edit__show';
+    show.checked = visible !== false;
+    const labelInput = document.createElement('input');
+    labelInput.type = 'text';
+    labelInput.className = 'cat-edit__label';
+    labelInput.value = label || '';
+    labelInput.placeholder = 'Emotion name';
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.className = 'cat-edit__key';
+    keyInput.value = key || '';
+    keyInput.placeholder = 'key (auto)';
+    keyInput.setAttribute('aria-label', 'Internal key');
+    const rm = document.createElement('button');
+    rm.type = 'button';
+    rm.className = 'icon-btn cat-edit__remove';
+    rm.textContent = '✕';
+    const name = () => labelInput.value.trim() || 'this emotion';
+    const syncNames = () => {
+        show.setAttribute('aria-label', `Show ${name()} on the form`);
+        labelInput.setAttribute('aria-label', 'Emotion name');
+        rm.setAttribute('aria-label', `Remove ${name()}`);
+        rm.title = `Remove ${name()}`;
+    };
+    syncNames();
+    labelInput.addEventListener('input', syncNames);
+    rm.addEventListener('click', () => {
+        const next = row.nextElementSibling || row.previousElementSibling;
+        row.remove();
+        const target = next && next.querySelector('.cat-edit__label');
+        if (target) target.focus();
+    });
+    row.appendChild(show); row.appendChild(labelInput); row.appendChild(keyInput); row.appendChild(rm);
+    return row;
+}
+
+// catId is the stable id of an existing category, or '' for a new one.
+// catId is the stable id of an existing category, or '' for a new one.
+function makeCategoryPanel(catId, cat, labels, tracked) {
+    labels = labels || LABELS;
+    const panel = document.createElement('fieldset');
+    panel.className = 'cat-edit';
+    panel.dataset.catId = catId || '';
+
+    const titleRow = document.createElement('div');
+    titleRow.className = 'cat-edit__head';
+    const titleInput = document.createElement('input');
+    titleInput.type = 'text';
+    titleInput.className = 'cat-edit__title';
+    titleInput.value = cat ? (cat.title || catId) : '';
+    titleInput.placeholder = 'Category name';
+    titleInput.setAttribute('aria-label', 'Category name');
+    titleRow.appendChild(titleInput);
+
+    const removeCatBtn = document.createElement('button');
+    removeCatBtn.textContent = 'Remove category';
+    removeCatBtn.type = 'button';
+    removeCatBtn.className = 'btn-small btn-danger';
+    removeCatBtn.addEventListener('click', () => { panel.remove(); });
+    titleRow.appendChild(removeCatBtn);
+    panel.appendChild(titleRow);
+
+    const keysContainer = document.createElement('div');
+    keysContainer.className = 'cat-edit__emotions';
+    ((cat && cat.keys) || []).forEach(k => keysContainer.appendChild(makeEmotionRow(k, labels[k] || k, !tracked || tracked.has(k))));
+    panel.appendChild(keysContainer);
+
+    const addKeyBtn = document.createElement('button');
+    addKeyBtn.type = 'button';
+    addKeyBtn.className = 'btn-small btn-secondary';
+    addKeyBtn.textContent = '+ Add emotion';
+    addKeyBtn.addEventListener('click', () => {
+        const row = makeEmotionRow('', '', true);
+        keysContainer.appendChild(row);
+        row.querySelector('.cat-edit__label').focus();
+    });
+    panel.appendChild(addKeyBtn);
+    return panel;
+}
+
+function renderCategoriesEditor(cats, labels, tracked) {
     const list = document.getElementById('categories-edit-list');
     if (!list) return;
     list.innerHTML = '';
-    const cats = loadEffectiveCategories();
-    Object.entries(cats).forEach(([catId, cat]) => {
-        const panel = document.createElement('div');
-        panel.className = 'cat-edit';
-        panel.style.border = '1px solid rgba(0,0,0,0.06)';
-        panel.style.padding = '8px';
-        panel.style.margin = '8px 0';
-
-        const titleRow = document.createElement('div');
-        titleRow.style.display = 'flex';
-        titleRow.style.gap = '8px';
-        const titleInput = document.createElement('input');
-        titleInput.value = cat.title || catId;
-        titleInput.dataset.catId = catId;
-        titleInput.placeholder = 'Category title';
-        titleRow.appendChild(titleInput);
-
-        const removeCatBtn = document.createElement('button');
-        removeCatBtn.textContent = 'Remove category';
-        removeCatBtn.type = 'button';
-        removeCatBtn.addEventListener('click', () => { panel.remove(); });
-        titleRow.appendChild(removeCatBtn);
-
-        panel.appendChild(titleRow);
-
-        const keysContainer = document.createElement('div');
-        cat.keys.forEach(k => {
-            const row = document.createElement('div');
-            row.style.display = 'flex';
-            row.style.gap = '8px';
-            const keyInput = document.createElement('input');
-            keyInput.value = k;
-            keyInput.placeholder = 'key (internal id)';
-            const labelInput = document.createElement('input');
-            labelInput.value = LABELS[k] || k;
-            labelInput.placeholder = 'label';
-            const rm = document.createElement('button'); rm.type='button'; rm.textContent='Remove'; rm.addEventListener('click', () => row.remove());
-            row.appendChild(keyInput); row.appendChild(labelInput); row.appendChild(rm);
-            keysContainer.appendChild(row);
-        });
-
-        const addKeyBtn = document.createElement('button'); addKeyBtn.type='button'; addKeyBtn.textContent='Add emotion'; addKeyBtn.addEventListener('click', () => {
-            const row = document.createElement('div'); row.style.display='flex'; row.style.gap='8px';
-            const keyInput = document.createElement('input'); keyInput.placeholder='key (internal id)';
-            const labelInput = document.createElement('input'); labelInput.placeholder='label';
-            const rm = document.createElement('button'); rm.type='button'; rm.textContent='Remove'; rm.addEventListener('click', () => row.remove());
-            row.appendChild(keyInput); row.appendChild(labelInput); row.appendChild(rm);
-            keysContainer.appendChild(row);
-        });
-
-        panel.appendChild(keysContainer);
-        panel.appendChild(addKeyBtn);
-        list.appendChild(panel);
+    const shown = tracked || new Set(getTrackedKeys());
+    Object.entries(cats || loadEffectiveCategories()).forEach(([catId, cat]) => {
+        list.appendChild(makeCategoryPanel(catId, cat, labels, shown));
     });
 }
 
@@ -296,53 +543,92 @@ function openCategoriesEditModal() {
     const modal = document.getElementById('categories-edit-modal');
     if (!modal) return;
     renderCategoriesEditor();
-    modal.hidden = false; modal.setAttribute('aria-hidden','false');
+    openModal(modal);
 }
 
 function closeCategoriesEditModal() {
-    const modal = document.getElementById('categories-edit-modal'); if (!modal) return; modal.hidden = true; modal.setAttribute('aria-hidden','true');
+    closeModal(document.getElementById('categories-edit-modal'));
+}
+
+function uniqueCategoryId(base, taken) {
+    let id = base || 'category';
+    if (!taken.has(id)) return id;
+    let n = 2;
+    while (taken.has(id + '_' + n)) n++;
+    return id + '_' + n;
+}
+
+// Turn the Manage emotions dialog's contents into a saved config.
+// `panels` = [{ catId, title, rows: [{ key, origKey, label, visible }] }]. Pure, so it is unit tested.
+// Returns { error } or { categories, labels, tracked, renamed }.
+function buildEmotionConfig(panels, defaultLabels) {
+    defaultLabels = defaultLabels || {};
+    const categories = {};
+    const labels = {};
+    const tracked = [];
+    const renamed = [];
+    const list = Array.isArray(panels) ? panels : [];
+    // existing categories keep their ids; reserve them before naming new ones
+    const taken = new Set(list.map(p => p && p.catId).filter(Boolean));
+    for (const panel of list) {
+        if (!panel) continue;
+        const title = String(panel.title || '').trim();
+        const keys = [];
+        (panel.rows || []).forEach(row => {
+            const label = String(row.label || '').trim();
+            const key = slugify(row.key) || slugify(label);
+            if (!key) return;
+            keys.push(key);
+            if (row.visible !== false) tracked.push(key);
+            if (row.origKey && row.origKey !== key) renamed.push(row.origKey);
+            if (label && label !== defaultLabels[key]) labels[key] = label;
+            else if (!label && !defaultLabels[key]) labels[key] = key;
+        });
+        if (!keys.length) continue; // empty categories are dropped
+        let id = panel.catId;
+        if (!id) { id = uniqueCategoryId(slugify(title), taken); taken.add(id); }
+        categories[id] = { title: title || id, keys };
+    }
+    const allKeys = Object.values(categories).reduce((acc, c) => acc.concat(c.keys), []);
+    if (!allKeys.length) return { error: 'Add at least one emotion' };
+    if (allKeys.includes('note')) return { error: '"note" is reserved' };
+    const dup = allKeys.filter((v, i, a) => a.indexOf(v) !== i);
+    if (dup.length) return { error: 'Two emotions share the name or key: ' + Array.from(new Set(dup)).join(', ') };
+    if (!tracked.length) return { error: 'Choose at least one emotion to show on the form' };
+    return { categories, labels, tracked, renamed };
+}
+
+function readEmotionEditor() {
+    const list = document.getElementById('categories-edit-list');
+    if (!list) return [];
+    return Array.from(list.querySelectorAll('.cat-edit')).map(panel => ({
+        catId: panel.dataset.catId,
+        title: panel.querySelector('.cat-edit__title').value,
+        rows: Array.from(panel.querySelectorAll('.cat-edit__emotion')).map(row => ({
+            key: row.querySelector('.cat-edit__key').value,
+            origKey: row.dataset.origKey,
+            label: row.querySelector('.cat-edit__label').value,
+            visible: row.querySelector('.cat-edit__show').checked
+        }))
+    }));
 }
 
 function saveCategoriesEditModal() {
-    const list = document.getElementById('categories-edit-list'); if (!list) return;
-    const panels = Array.from(list.children);
-    const out = {};
-    panels.forEach(panel => {
-        const titleInput = panel.querySelector('input[placeholder="Category title"]') || panel.querySelector('input');
-        const title = titleInput ? titleInput.value.trim() : '';
-        const keyRows = Array.from(panel.querySelectorAll('div > div, div')).filter(n => n.querySelectorAll); // best effort
-        const keys = [];
-        // gather inputs inside panel (all input pairs)
-        const inputs = panel.querySelectorAll('input');
-        const catIdRaw = (title || '').toLowerCase().replace(/[^a-z0-9]+/g, '_');
-        for (let i=1;i<inputs.length;i+=2) {
-            const key = (inputs[i-1].value || '').trim();
-            const label = (inputs[i].value || '').trim();
-            if (key) { keys.push(key); LABELS[key] = label || key; }
-        }
-        if (keys.length) out[catIdRaw || ('cat_' + Math.random().toString(36).slice(2,8))] = { title: title || catIdRaw, keys };
-    });
-    // persist and re-render
-    // validate for duplicate keys
-    const allKeys = Object.values(out).reduce((acc,c) => acc.concat(c.keys), []);
-    const dup = allKeys.filter((v,i,a) => a.indexOf(v) !== i);
-    if (dup.length) { flashMessage('Duplicate keys found: ' + Array.from(new Set(dup)).join(', '), true); return; }
-
-    // warn if relabeling existing keys (simple detection)
-    const prevKeys = getAllEmotionKeys();
-    const renamed = allKeys.filter(k => prevKeys.includes(k) === false);
-    if (renamed.length) {
-        // polite warning but allow saving
-        if (!confirm('You added or renamed keys. Existing stored entries may not map to the new keys. Continue?')) return;
+    const result = buildEmotionConfig(readEmotionEditor(), DEFAULT_LABELS);
+    if (result.error) { flashMessage(result.error, true); return; }
+    // past entries are stored by key, so changing a key detaches its history
+    if (result.renamed.length) {
+        if (!confirm('You changed the internal key of ' + result.renamed.join(', ') + '. Past entries recorded under the old key will not show under the new one. Continue?')) return;
     }
-
-    setSavedCategories(out);
+    if (!setSavedCategories({ version: 2, categories: result.categories, labels: result.labels })) { flashMessage('Could not save emotions', true); return; }
+    setTrackedKeys(result.tracked);
     closeCategoriesEditModal();
     renderEmotionForm();
+    flashMessage('Emotions saved');
 }
 
 function exportCategoriesConfig() {
-    const cats = getSavedCategories() || CATEGORIES;
+    const cats = getSavedCategories() || { version: 2, categories: cloneCategories(CATEGORIES), labels: {} };
     const blob = new Blob([JSON.stringify(cats, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a'); a.href = url; a.download = 'categories-config.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
@@ -351,105 +637,112 @@ function exportCategoriesConfig() {
 async function importCategoriesConfigFile(file) {
     try {
         const text = await file.text();
-        const data = JSON.parse(text);
-        // basic shape check
-        if (typeof data !== 'object' || Array.isArray(data)) { flashMessage('Invalid config file', true); return; }
+        const data = normalizeCategoriesConfig(JSON.parse(text));
+        if (!data) { flashMessage('Invalid config file', true); return; }
         setSavedCategories(data);
+        // imported emotions all start visible
+        setTrackedKeys(getAllEmotionKeys().filter(k => k !== 'note'));
         renderCategoriesEditor();
+        renderEmotionForm();
         flashMessage('Imported categories');
     } catch (e) { flashMessage('Import failed', true); }
 }
 
-// Keyboard handling for modals (Escape to close) and basic focus trap
+// ----- Dialog helpers: focus moves in on open and returns to the opener on close -----
+const modalOpeners = new Map();
+
+function openModal(modal) {
+    if (!modal) return;
+    modalOpeners.set(modal.id, document.activeElement);
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    const first = modal.querySelector('.modal__panel input:not([type="hidden"]), .modal__panel button, .modal__panel select, .modal__panel textarea');
+    if (first) first.focus();
+}
+
+function closeModal(modal) {
+    if (!modal || modal.hidden) return;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    const opener = modalOpeners.get(modal.id);
+    modalOpeners.delete(modal.id);
+    if (opener && typeof opener.focus === 'function' && document.body.contains(opener)) opener.focus();
+}
+
+// Escape closes the top dialog; Tab stays inside an open dialog.
 document.addEventListener('keydown', (ev) => {
+    const open = ['entry-edit-modal', 'export-modal', 'categories-edit-modal']
+        .map(id => document.getElementById(id)).find(m => m && !m.hidden);
+    if (!open) return;
     if (ev.key === 'Escape') {
-        const mod1 = document.getElementById('categories-modal');
-        const mod2 = document.getElementById('categories-edit-modal');
-        if (mod2 && !mod2.hidden) { closeCategoriesEditModal(); }
-        else if (mod1 && !mod1.hidden) { closeCategoriesModal(); }
+        if (open.id === 'entry-edit-modal') closeEntryEditModal();
+        else if (open.id === 'export-modal') closeModal(open);
+        else closeCategoriesEditModal();
+        return;
+    }
+    if (ev.key === 'Tab') {
+        const items = Array.from(open.querySelectorAll('.modal__panel input:not([type="hidden"]), .modal__panel button, .modal__panel select, .modal__panel textarea, .modal__panel summary'))
+            .filter(el => !el.disabled && el.offsetParent !== null);
+        if (!items.length) return;
+        const first = items[0], last = items[items.length - 1];
+        if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+        else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
     }
 });
 
-// Export all entries to CSV with stable headers
-async function exportEntriesToCsv() {
-    const entries = await getAllEntries();
-    if (!entries || entries.length === 0) {
-        flashMessage('No entries to export', true);
-        return;
-    }
-
-    const headers = ['timestamp', 'id', ...getEmotionCsvKeys()];
-    const rows = entries.map(e => {
-        const row = [];
-        row.push(new Date(e.timestamp).toISOString());
-        row.push(e.id || '');
-        const vals = e.values || {};
-        getEmotionCsvKeys().forEach(k => {
-            const v = vals[k];
-            row.push(v === null || typeof v === 'undefined' ? '' : v);
-        });
-        return row.map(csvEscape).join(',');
-    });
-
-    const csv = [headers.map(csvEscape).join(','), ...rows].join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `emotion-entries-${new Date().toISOString()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-}
-
 // Export unsynced entries to CSV and mark them as exported
-async function exportUnsyncedToCsv() {
-    const unsynced = await getUnsyncedEntries();
-    if (!unsynced || unsynced.length === 0) {
-        flashMessage('No unsynced entries to export', true);
-        return;
-    }
-    const headers = ['timestamp', 'id', ...getEmotionCsvKeys()];
-    const rows = unsynced.map(e => {
-        const row = [];
-        row.push(new Date(e.timestamp).toISOString());
-        row.push(e.id || '');
-        const vals = e.values || {};
-        getEmotionCsvKeys().forEach(k => {
-            const v = vals[k];
-            row.push(v === null || typeof v === 'undefined' ? '' : v);
-        });
-        return row.map(csvEscape).join(',');
-    });
+// ----- Export -----
 
-    const csv = [headers.map(csvEscape).join(','), ...rows].join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `emotion-unsynced-${new Date().toISOString()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-
-    const ids = unsynced.map(e => e.id).filter(Boolean);
-    await markEntriesExported(ids);
-    flashMessage(`Exported ${ids.length} entries`);
+// 'all' = every entry; 'new' = entries not yet exported. Pure, so it is unit tested.
+function selectEntriesForExport(entries, scope) {
+    const list = Array.isArray(entries) ? entries : [];
+    return scope === 'new' ? list.filter(e => e && !e.exported) : list.slice();
 }
 
-async function exportEntriesToJson() {
-    const entries = await getAllEntries();
-    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+// e.g. lifelens-new-2026-11-23.csv
+function exportFileName(format, scope, date) {
+    const d = date instanceof Date && !isNaN(date) ? date : new Date();
+    const ext = format === 'json' ? 'json' : 'csv';
+    return `lifelens-${scope === 'new' ? 'new' : 'all'}-${dayKey(d.getTime())}.${ext}`;
+}
+
+function downloadText(name, text, type) {
+    const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `emotion-entries-${new Date().toISOString()}.json`;
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+}
+
+// Download entries in the chosen format. Exporting only new entries marks them as exported.
+async function runExport(format, scope) {
+    const entries = selectEntriesForExport(await getAllEntries(), scope);
+    if (!entries.length) {
+        flashMessage(scope === 'new' ? 'No new entries since your last export' : 'No entries to export', true);
+        return false;
+    }
+    const sorted = entries.slice().sort((a, b) => a.timestamp - b.timestamp);
+    if (format === 'json') downloadText(exportFileName('json', scope), JSON.stringify(sorted, null, 2), 'application/json');
+    else downloadText(exportFileName('csv', scope), buildCsv(sorted, getEmotionCsvKeys()), 'text/csv;charset=utf-8;');
+    if (scope === 'new') {
+        await markEntriesExported(sorted.map(e => e.id).filter(Boolean));
+        await refreshViews();
+    }
+    flashMessage(`Exported ${sorted.length} ${sorted.length === 1 ? 'entry' : 'entries'}`);
+    return true;
+}
+
+async function openExportModal() {
+    const modal = document.getElementById('export-modal');
+    if (!modal) return;
+    const entries = await getAllEntries();
+    document.getElementById('export-count-all').textContent = `(${entries.length})`;
+    document.getElementById('export-count-new').textContent = `(${selectEntriesForExport(entries, 'new').length})`;
+    openModal(modal);
 }
 
 function formToValues() {
@@ -478,26 +771,73 @@ function formToValues() {
     return values;
 }
 
+// Ratings that were actually given, in category order. Pure, so it is unit tested.
+function ratedPairs(values) {
+    const vals = values || {};
+    const order = getOrderedEmotionKeys([{ values: vals }]);
+    return order.filter(k => typeof vals[k] === 'number' && Number.isFinite(vals[k])).map(k => [k, vals[k]]);
+}
+
+// "Today", "Yesterday", or e.g. "Mon, Nov 17" (with the year when it isn't this year).
+function dayHeading(ts, now) {
+    const n = new Date(typeof now === 'number' ? now : Date.now());
+    const d = new Date(ts);
+    const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((startOf(n) - startOf(d)) / 86400000);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Yesterday';
+    const opts = { weekday: 'short', month: 'short', day: 'numeric' };
+    if (d.getFullYear() !== n.getFullYear()) opts.year = 'numeric';
+    return d.toLocaleDateString(undefined, opts);
+}
+
+// Newest first, grouped by local calendar day: [{ key, heading, entries }]
+function groupEntriesByDay(entries, now) {
+    const sorted = (Array.isArray(entries) ? entries : []).filter(e => e && Number.isFinite(e.timestamp))
+        .sort((a, b) => b.timestamp - a.timestamp);
+    const groups = [];
+    sorted.forEach(e => {
+        const key = dayKey(e.timestamp);
+        let g = groups[groups.length - 1];
+        if (!g || g.key !== key) { g = { key, heading: dayHeading(e.timestamp, now), entries: [] }; groups.push(g); }
+        g.entries.push(e);
+    });
+    return groups;
+}
+
+const HISTORY_PAGE = 30;
+let historyLimit = HISTORY_PAGE;
+
 function renderEntriesList(entries) {
     const container = document.getElementById('emotion-display');
     if (!container) return;
     if (!entries || entries.length === 0) {
-        container.innerHTML = '<p>No entries yet.</p>';
+        container.innerHTML = '<div class="empty-state"><p>No entries yet.</p><button type="button" data-action="go-log">Log how you feel</button></div>';
         return;
     }
-    const sorted = entries.slice().sort((a,b) => b.timestamp - a.timestamp);
-    const html = sorted.map(e => {
-        const date = new Date(e.timestamp);
-        const pairs = Object.entries(e.values || {});
-        const items = pairs.filter(([k]) => k !== 'note').map(([k,v]) => {
-            const label = LABELS[k] || k;
-            return `<li><strong>${escapeHtml(label)}:</strong> ${v === null ? '—' : escapeHtml(String(v))}</li>`;
+    const shown = entries.slice().sort((a, b) => b.timestamp - a.timestamp).slice(0, historyLimit);
+    const html = groupEntriesByDay(shown).map(g => {
+        const cards = g.entries.map(e => {
+            const time = new Date(e.timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+            const pairs = ratedPairs(e.values);
+            const chips = pairs.length
+                ? `<ul class="chips">${pairs.map(([k, v]) => `<li class="chip">${escapeHtml(LABELS[k] || k)} <b>${escapeHtml(String(v))}</b></li>`).join('')}</ul>`
+                : '<p class="entry__empty">No ratings</p>';
+            const note = e.values && e.values.note ? String(e.values.note) : '';
+            const long = note.length > 140 || note.split('\n').length > 3;
+            const noteHtml = note
+                ? `<div class="entry-note${long ? ' entry-note--clamped' : ''}"><p class="entry-note__text">${escapeHtml(note)}</p></div>${long ? `<button type="button" class="link-btn" data-action="toggle-note" aria-expanded="false">Show full note</button>` : ''}`
+                : '';
+            const exportedBadge = e.exported ? `<span class="badge-exported">Exported</span>` : '';
+            const actions = `<div class="entry__actions"><button type="button" class="btn-small btn-secondary" data-action="edit" data-id="${e.id}" aria-label="Edit entry from ${escapeHtml(g.heading)} ${escapeHtml(time)}">Edit</button><button type="button" class="btn-small btn-danger" data-action="delete" data-id="${e.id}" aria-label="Delete entry from ${escapeHtml(g.heading)} ${escapeHtml(time)}">Delete</button></div>`;
+            return `<article class="entry"><div class="entry__meta"><span class="entry__time">${escapeHtml(time)}</span>${exportedBadge}</div>${chips}${noteHtml}${actions}</article>`;
         }).join('');
-        const noteHtml = (e.values && e.values.note) ? `<div class="entry-note"><strong>Note:</strong><div class="note-text">${escapeHtml(e.values.note)}</div></div>` : '';
-        const exportedBadge = e.exported ? `<span class="badge-exported">Exported</span>` : '';
-        return `<div class="entry"><div class="entry__meta"><strong>${date.toLocaleString()}</strong>${exportedBadge}</div><ul>${items}</ul>${noteHtml}</div>`;
+        return `<section class="day"><h3 class="day__heading">${escapeHtml(g.heading)}</h3>${cards}</section>`;
     }).join('');
-    container.innerHTML = html;
+    const more = entries.length > historyLimit
+        ? `<div class="history-more"><button type="button" class="btn-secondary" data-action="show-more">Show older entries (${entries.length - historyLimit} more)</button></div>`
+        : '';
+    container.innerHTML = html + more;
 }
 
 // --- Dynamic form rendering based on categories and tracked keys ---
@@ -507,6 +847,13 @@ function renderEmotionForm() {
     form.innerHTML = '';
 
     const tracked = new Set(getTrackedKeys());
+
+    // say what the numbers mean before the first rating
+    const hint = document.createElement('p');
+    hint.id = 'scale-hint';
+    hint.className = 'scale-hint';
+    hint.textContent = SCALE_HINT;
+    form.appendChild(hint);
 
     const effective = loadEffectiveCategories();
     Object.entries(effective).forEach(([catId, cat]) => {
@@ -522,17 +869,14 @@ function renderEmotionForm() {
             if (!tracked.has(k)) return;
             const row = document.createElement('div');
             row.className = 'emotion';
-            const label = document.createElement('label');
-            label.setAttribute('for', k);
+            row.classList.add('emotion--scale');
+            // a radiogroup is named by aria-labelledby, so this is a plain text label
+            const label = document.createElement('span');
+            label.className = 'emotion__label';
+            label.id = 'lbl_' + k;
             label.textContent = LABELS[k] || k;
-            const input = document.createElement('input');
-            input.type = 'number';
-            input.id = k;
-            input.name = k;
-            input.min = 1;
-            input.max = 10;
             row.appendChild(label);
-            row.appendChild(input);
+            row.appendChild(buildRatingScale(k, k, label.id, null));
             form.appendChild(row);
         });
     });
@@ -558,62 +902,16 @@ function renderEmotionForm() {
     submit.textContent = 'Save Emotions';
     form.appendChild(submit);
 
-    // wire submit handler (existing initUI also attaches to form submit)
-}
-
-function openCategoriesModal() {
-    const modal = document.getElementById('categories-modal');
-    const list = document.getElementById('categories-list');
-    if (!modal || !list) return;
-    list.innerHTML = '';
-    const tracked = new Set(getTrackedKeys());
-
-    const effective = loadEffectiveCategories();
-    Object.entries(effective).forEach(([catId, cat]) => {
-        const group = document.createElement('fieldset');
-        const legend = document.createElement('legend');
-        legend.textContent = cat.title;
-        group.appendChild(legend);
-        cat.keys.forEach(k => {
-            const id = `chk_${k}`;
-            const wrap = document.createElement('div');
-            wrap.style.display = 'flex';
-            wrap.style.alignItems = 'center';
-            wrap.style.gap = '8px';
-            const chk = document.createElement('input');
-            chk.type = 'checkbox';
-            chk.id = id;
-            chk.value = k;
-            chk.checked = tracked.has(k);
-            const lbl = document.createElement('label');
-            lbl.setAttribute('for', id);
-            lbl.textContent = LABELS[k] || k;
-            wrap.appendChild(chk);
-            wrap.appendChild(lbl);
-            group.appendChild(wrap);
+    // bring back anything typed before a reload, re-render or app update
+    const draft = loadDraft();
+    if (draft) {
+        Object.entries(draft).forEach(([k, v]) => {
+            if (k === 'note') noteField.value = v || '';
+            else if (tracked.has(k)) setScaleValue(k, v);
         });
-        list.appendChild(group);
-    });
+    }
 
-    modal.hidden = false;
-    modal.setAttribute('aria-hidden', 'false');
-}
-
-function closeCategoriesModal() {
-    const modal = document.getElementById('categories-modal');
-    if (!modal) return;
-    modal.hidden = true;
-    modal.setAttribute('aria-hidden', 'true');
-}
-
-function saveCategoriesFromModal() {
-    const list = document.getElementById('categories-list');
-    if (!list) return;
-    const checked = Array.from(list.querySelectorAll('input[type="checkbox"]:checked')).map(c => c.value);
-    if (!checked || checked.length === 0) { flashMessage('Select at least one emotion to track', true); return; }
-    setTrackedKeys(checked);
-    closeCategoriesModal();
-    renderEmotionForm();
+    // wire submit handler (existing initUI also attaches to form submit)
 }
 
 function escapeHtml(str) {
@@ -622,37 +920,79 @@ function escapeHtml(str) {
     });
 }
 
+// After saving, swap the form for a one-line summary so the save is obvious
+// and a second tap can't create a duplicate entry.
+function showSavedSummary(id, values, ts) {
+    const panel = document.getElementById('saved-summary');
+    const form = document.getElementById('emotion-form');
+    if (!panel || !form) { flashMessage('Saved'); return; }
+    document.getElementById('saved-summary-text').textContent = savedSummaryText(values, ts);
+    document.getElementById('saved-edit').dataset.id = String(id);
+    form.hidden = true;
+    panel.hidden = false;
+    document.getElementById('saved-log-another').focus();
+}
+
+function hideSavedSummary(focusForm) {
+    const panel = document.getElementById('saved-summary');
+    const form = document.getElementById('emotion-form');
+    if (panel) panel.hidden = true;
+    if (form) {
+        form.hidden = false;
+        if (focusForm) {
+            const first = form.querySelector('input[type="radio"], textarea');
+            if (first) first.focus();
+        }
+    }
+}
+
 async function initUI() {
     const form = document.getElementById('emotion-form');
     // render form according to tracked emotions
     renderEmotionForm();
     if (form) {
+        let saving = false;
         form.addEventListener('submit', async (ev) => {
             ev.preventDefault();
+            if (saving) return; // ignore a double tap while the first save runs
             const values = formToValues();
-            await addEntry(values);
-    getAllEmotionKeys().forEach(k => {
-        const el = document.getElementById(k);
-        if (el) el.value = '';
+            if (!hasDraftContent(values)) { flashMessage('Rate at least one emotion or add a note', true); return; }
+            saving = true;
+            try {
+                const id = await addEntry(values);
+                clearDraft();
+                // a "Restored your unsaved ratings" toast no longer applies
+                document.querySelectorAll('#toast-region .toast').forEach(t => t.remove());
+                renderEmotionForm(); // fresh, empty form for next time
+                showSavedSummary(id, values, Date.now());
+                await refreshViews();
+            } catch (err) {
+                console.error(err);
+                flashMessage('Could not save. Your ratings are still here.', true);
+            } finally {
+                saving = false;
+            }
         });
-            const entries = await getAllEntries();
-            renderEntriesList(entries);
-            flashMessage('Saved');
+        // autosave a draft as the person rates or types
+        const persist = () => saveDraft(formToValues());
+        form.addEventListener('input', persist);
+        form.addEventListener('change', persist);
+        if (loadDraft()) flashMessage('Restored your unsaved ratings', false, {
+            label: 'Discard',
+            onClick: () => { clearDraft(); renderEmotionForm(); }
         });
     }
 
-    // wire customize categories modal
-    const customize = document.getElementById('customize-emotions');
-    if (customize) customize.addEventListener('click', () => openCategoriesModal());
-    const saveBtn = document.getElementById('categories-save');
-    if (saveBtn) saveBtn.addEventListener('click', () => saveCategoriesFromModal());
-    const cancelBtn = document.getElementById('categories-cancel');
-    if (cancelBtn) cancelBtn.addEventListener('click', () => closeCategoriesModal());
-    const backdrop = document.getElementById('categories-backdrop');
-    if (backdrop) backdrop.addEventListener('click', () => closeCategoriesModal());
+    const logAnother = document.getElementById('saved-log-another');
+    if (logAnother) logAnother.addEventListener('click', () => hideSavedSummary(true));
+    const editSaved = document.getElementById('saved-edit');
+    if (editSaved) editSaved.addEventListener('click', async () => {
+        const rec = await getEntry(Number(editSaved.dataset.id));
+        if (rec) openEntryEditModal(rec); else flashMessage('Entry not found', true);
+    });
 
-    // wire categories edit modal
-    const editBtn = document.getElementById('edit-categories');
+    // wire the Manage emotions dialog
+    const editBtn = document.getElementById('manage-emotions');
     if (editBtn) editBtn.addEventListener('click', () => openCategoriesEditModal());
     const editSave = document.getElementById('categories-edit-save');
     if (editSave) editSave.addEventListener('click', () => saveCategoriesEditModal());
@@ -662,28 +1002,21 @@ async function initUI() {
     if (editBackdrop) editBackdrop.addEventListener('click', () => closeCategoriesEditModal());
     const addCat = document.getElementById('add-category');
     if (addCat) addCat.addEventListener('click', () => {
-        // append an empty panel and re-render to allow editing
         const list = document.getElementById('categories-edit-list');
         if (!list) return;
-        const panel = document.createElement('div'); panel.className='cat-edit'; panel.style.border='1px solid rgba(0,0,0,0.06)'; panel.style.padding='8px'; panel.style.margin='8px 0';
-        const titleRow = document.createElement('div'); titleRow.style.display='flex'; titleRow.style.gap='8px';
-        const titleInput = document.createElement('input'); titleInput.placeholder='Category title'; titleRow.appendChild(titleInput);
-        const removeCatBtn = document.createElement('button'); removeCatBtn.textContent='Remove category'; removeCatBtn.type='button'; removeCatBtn.addEventListener('click', () => panel.remove()); titleRow.appendChild(removeCatBtn);
-        panel.appendChild(titleRow);
-        const keysContainer = document.createElement('div'); panel.appendChild(keysContainer);
-        const addKeyBtn = document.createElement('button'); addKeyBtn.type='button'; addKeyBtn.textContent='Add emotion'; addKeyBtn.addEventListener('click', () => {
-            const row = document.createElement('div'); row.style.display='flex'; row.style.gap='8px';
-            const keyInput = document.createElement('input'); keyInput.placeholder='key (internal id)';
-            const labelInput = document.createElement('input'); labelInput.placeholder='label';
-            const rm = document.createElement('button'); rm.type='button'; rm.textContent='Remove'; rm.addEventListener('click', () => row.remove());
-            row.appendChild(keyInput); row.appendChild(labelInput); row.appendChild(rm);
-            keysContainer.appendChild(row);
-        });
-        panel.appendChild(addKeyBtn);
+        const panel = makeCategoryPanel('', null);
         list.appendChild(panel);
+        panel.querySelector('.cat-edit__emotions').appendChild(makeEmotionRow('', '', true));
+        panel.querySelector('.cat-edit__title').focus();
     });
     const resetBtn = document.getElementById('reset-categories');
-    if (resetBtn) resetBtn.addEventListener('click', () => { resetSavedCategories(); renderCategoriesEditor(); flashMessage('Reset to defaults'); });
+    // Reset only refills the editor; nothing is stored until Save.
+    if (resetBtn) resetBtn.addEventListener('click', () => { renderCategoriesEditor(cloneCategories(CATEGORIES), DEFAULT_LABELS, new Set(Object.values(CATEGORIES).reduce((a, c) => a.concat(c.keys), []))); flashMessage('Defaults restored. Press Save to keep them.'); });
+    const showKeys = document.getElementById('show-keys');
+    if (showKeys) showKeys.addEventListener('change', () => {
+        const modal = document.getElementById('categories-edit-modal');
+        if (modal) modal.classList.toggle('show-keys', showKeys.checked);
+    });
     const exportBtn = document.getElementById('export-categories');
     if (exportBtn) exportBtn.addEventListener('click', () => exportCategoriesConfig());
     const importCatsBtn = document.getElementById('import-categories');
@@ -691,31 +1024,21 @@ async function initUI() {
     if (importCatsBtn && importCatsFile) importCatsBtn.addEventListener('click', () => { importCatsFile.value=''; importCatsFile.click(); });
     if (importCatsFile) importCatsFile.addEventListener('change', async (ev) => { const file = ev.target.files && ev.target.files[0]; if (!file) return; await importCategoriesConfigFile(file); });
 
-    const viewBtn = document.getElementById('view-history');
-    const display = document.getElementById('emotion-display');
-    if (display) display.style.display = 'none';
-
-    if (viewBtn) viewBtn.addEventListener('click', async () => {
-        if (!display) return;
-        if (display.style.display === 'none' || display.style.display === '') {
-            const entries = await getAllEntries();
-            renderEntriesList(entries);
-            display.style.display = 'block';
-            viewBtn.textContent = 'Hide History';
-        } else {
-            display.style.display = 'none';
-            viewBtn.textContent = 'View History';
-        }
+    // Export sheet
+    const openExport = document.getElementById('open-export');
+    if (openExport) openExport.addEventListener('click', () => openExportModal());
+    const exportModal = document.getElementById('export-modal');
+    const exportForm = document.getElementById('export-form');
+    if (exportForm) exportForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const format = exportForm.querySelector('input[name="export-format"]:checked').value;
+        const scope = exportForm.querySelector('input[name="export-scope"]:checked').value;
+        if (await runExport(format, scope)) closeModal(exportModal);
     });
-
-    const exportJsonBtn = document.getElementById('export-json');
-    if (exportJsonBtn) exportJsonBtn.addEventListener('click', () => exportEntriesToJson());
-
-    const exportCsvBtn = document.getElementById('export-csv');
-    if (exportCsvBtn) exportCsvBtn.addEventListener('click', () => exportEntriesToCsv());
-
-    const exportUnsyncedBtn = document.getElementById('export-unsynced');
-    if (exportUnsyncedBtn) exportUnsyncedBtn.addEventListener('click', () => exportUnsyncedToCsv());
+    const exportCancel = document.getElementById('export-cancel');
+    if (exportCancel) exportCancel.addEventListener('click', () => closeModal(exportModal));
+    const exportBackdrop = document.getElementById('export-backdrop');
+    if (exportBackdrop) exportBackdrop.addEventListener('click', () => closeModal(exportModal));
 
     const importFile = document.getElementById('import-file');
     const importBtn = document.getElementById('import-json');
@@ -729,8 +1052,7 @@ async function initUI() {
                 const text = await file.text();
                 const data = JSON.parse(text);
                 await importEntriesFromArray(data);
-                const entries = await getAllEntries();
-                if (display && display.style.display !== 'none') renderEntriesList(entries);
+                await refreshViews();
                 flashMessage('Imported');
             } catch (err) {
                 flashMessage('Import failed', true);
@@ -741,16 +1063,18 @@ async function initUI() {
 
     const clearBtn = document.getElementById('clear-all');
     if (clearBtn) clearBtn.addEventListener('click', async () => {
-        if (!confirm('Clear all emotion entries?')) return;
+        const count = (await getAllEntries()).length;
+        if (count === 0) { flashMessage(clearAllConfirmText(0)); return; }
+        if (!confirm(clearAllConfirmText(count))) return;
         await clearAllEntries();
-        renderEntriesList([]);
+        await refreshViews();
         flashMessage('Cleared');
     });
 
     const undoBtn = document.getElementById('undo-last-export');
     if (undoBtn) undoBtn.addEventListener('click', async () => {
         const raw = localStorage.getItem('lastExportedIds');
-        if (!raw) { flashMessage('Nothing to undo', true); return; }
+        if (!raw) { flashMessage('No export to undo', true); return; }
         let ids;
         try { ids = JSON.parse(raw); } catch (e) { flashMessage('Nothing to undo', true); return; }
         if (!Array.isArray(ids) || ids.length === 0) { flashMessage('Nothing to undo', true); return; }
@@ -766,15 +1090,66 @@ async function initUI() {
         });
         tx.oncomplete = async () => {
             localStorage.removeItem('lastExportedIds');
-            const entries = await getAllEntries();
-            renderEntriesList(entries);
-            flashMessage('Undo complete');
+            await refreshViews();
+            flashMessage(`Marked ${ids.length} ${ids.length === 1 ? 'entry' : 'entries'} as not exported`);
         };
         tx.onerror = () => flashMessage('Undo failed', true);
     });
 
-    const entries = await getAllEntries();
-    renderEntriesList(entries);
+    initEntryEditing();
+    initTrends();
+    initViews();
+}
+
+// ----- Log / History / Settings views -----
+const VIEWS = ['log', 'history', 'settings'];
+
+// '#history' -> 'history'; anything unknown -> 'log'. Pure, so it is unit tested.
+function parseViewHash(hash) {
+    const v = String(hash || '').replace(/^#/, '').toLowerCase();
+    return VIEWS.includes(v) ? v : 'log';
+}
+
+async function showView(view, focusTab) {
+    VIEWS.forEach(v => {
+        const panel = document.getElementById('view-' + v);
+        const tab = document.getElementById('tab-' + v);
+        const active = v === view;
+        if (panel) panel.hidden = !active;
+        if (tab) {
+            tab.setAttribute('aria-selected', active ? 'true' : 'false');
+            tab.tabIndex = active ? 0 : -1;
+            if (active && focusTab) tab.focus();
+        }
+    });
+    if (view === 'history') {
+        historyLimit = HISTORY_PAGE;
+        await refreshViews();
+    }
+}
+
+function initViews() {
+    const tabs = VIEWS.map(v => document.getElementById('tab-' + v)).filter(Boolean);
+    tabs.forEach((tab, i) => {
+        tab.addEventListener('click', () => {
+            const view = tab.dataset.view;
+            if (location.hash !== '#' + view) location.hash = view; else showView(view);
+        });
+        // arrow keys move between tabs (ARIA tabs pattern)
+        tab.addEventListener('keydown', (ev) => {
+            let j = null;
+            if (ev.key === 'ArrowRight') j = (i + 1) % tabs.length;
+            else if (ev.key === 'ArrowLeft') j = (i - 1 + tabs.length) % tabs.length;
+            else if (ev.key === 'Home') j = 0;
+            else if (ev.key === 'End') j = tabs.length - 1;
+            if (j === null) return;
+            ev.preventDefault();
+            location.hash = tabs[j].dataset.view;
+            tabs[j].focus();
+        });
+    });
+    window.addEventListener('hashchange', () => showView(parseViewHash(location.hash)));
+    showView(parseViewHash(location.hash));
 }
 
 // ----- Dark mode helpers -----
@@ -784,9 +1159,14 @@ function applyTheme(isDark) {
         if (isDark) html.classList.add('dark'); else html.classList.remove('dark');
         // update meta theme-color so mobile UI (status bar) matches
         const meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.setAttribute('content', isDark ? '#0b1220' : '#4CAF50');
+        if (meta) meta.setAttribute('content', isDark ? '#0b1220' : '#2e7d32');
         const btn = document.getElementById('theme-toggle');
-        if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+        if (btn) {
+            btn.textContent = isDark ? '☀️' : '🌙';
+            const label = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+            btn.setAttribute('aria-label', label);
+            btn.title = label;
+        }
     } catch (e) { console.error(e); }
 }
 
@@ -813,19 +1193,337 @@ function initTheme() {
 // initialize theme early
 try { initTheme(); } catch (e) { /* ignore */ }
 
-function flashMessage(text, isError) {
-    const container = document.createElement('div');
-    container.textContent = text;
-    container.style.position = 'fixed';
-    container.style.right = '16px';
-    container.style.bottom = '16px';
-    container.style.background = isError ? '#c0392b' : '#2ecc71';
-    container.style.color = '#fff';
-    container.style.padding = '8px 12px';
-    container.style.borderRadius = '6px';
-    container.style.boxShadow = '0 2px 6px rgba(0,0,0,.2)';
-    document.body.appendChild(container);
-    setTimeout(() => container.remove(), 2500);
+// Show a short message in the shared live region (announced by screen readers).
+// `action` = { label, onClick } adds a button, e.g. Undo, and keeps the toast up longer.
+function flashMessage(text, isError, action) {
+    let region = document.getElementById('toast-region');
+    if (!region) {
+        region = document.createElement('div');
+        region.id = 'toast-region';
+        region.className = 'toast-region';
+        region.setAttribute('role', 'status');
+        region.setAttribute('aria-live', 'polite');
+        document.body.appendChild(region);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast' + (isError ? ' toast--error' : '');
+    const msg = document.createElement('span');
+    msg.textContent = text;
+    toast.appendChild(msg);
+    let timer = null;
+    if (action && action.label && typeof action.onClick === 'function') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'toast__action';
+        btn.textContent = action.label;
+        btn.addEventListener('click', () => {
+            clearTimeout(timer);
+            toast.remove();
+            action.onClick();
+        });
+        toast.appendChild(btn);
+    }
+    region.appendChild(toast);
+    timer = setTimeout(() => toast.remove(), action ? 6000 : 2500);
+}
+
+// ----- Shared helpers for history / trends -----
+
+// Re-render whichever data views are currently visible after a change
+async function refreshViews() {
+    const history = document.getElementById('view-history');
+    if (history && history.hidden) return; // rendered when the History tab opens
+    const entries = await getAllEntries();
+    renderEntriesList(entries);
+    renderTrends(entries);
+}
+
+// Emotion keys in category order, followed by any extra keys found in the given entries
+function getOrderedEmotionKeys(entries) {
+    const keys = [];
+    Object.values(loadEffectiveCategories()).forEach(c => (c.keys || []).forEach(k => { if (!keys.includes(k)) keys.push(k); }));
+    (entries || []).forEach(e => Object.keys(e.values || {}).forEach(k => {
+        if (k !== 'note' && !keys.includes(k)) keys.push(k);
+    }));
+    return keys;
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// Value for <input type="datetime-local"> in local time
+function toDateTimeLocal(ts) {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// Local calendar-day key, e.g. "2026-11-23"
+function dayKey(ts) {
+    const d = new Date(ts);
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+// ----- Edit / delete single entries -----
+
+let editingEntry = null;
+
+function initEntryEditing() {
+    const display = document.getElementById('emotion-display');
+    if (display) display.addEventListener('click', async (ev) => {
+        const btn = ev.target.closest('button[data-action]');
+        if (!btn) return;
+        if (btn.dataset.action === 'show-more') {
+            historyLimit += HISTORY_PAGE;
+            renderEntriesList(await getAllEntries());
+            return;
+        }
+        if (btn.dataset.action === 'toggle-note') {
+            const note = btn.previousElementSibling;
+            const open = note.classList.toggle('entry-note--clamped') === false;
+            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            btn.textContent = open ? 'Show less' : 'Show full note';
+            return;
+        }
+        if (btn.dataset.action === 'go-log') { location.hash = 'log'; return; }
+        const id = Number(btn.dataset.id);
+        if (btn.dataset.action === 'edit') {
+            const rec = await getEntry(id);
+            if (rec) openEntryEditModal(rec); else flashMessage('Entry not found', true);
+        } else if (btn.dataset.action === 'delete') {
+            // delete straight away and offer Undo, instead of asking first
+            const rec = await getEntry(id);
+            if (!rec) { flashMessage('Entry not found', true); return; }
+            await deleteEntry(id);
+            await refreshViews();
+            flashMessage('Entry deleted', false, {
+                label: 'Undo',
+                onClick: async () => {
+                    await updateEntry(rec); // put() with the same id brings it back unchanged
+                    await refreshViews();
+                    flashMessage('Entry restored');
+                }
+            });
+        }
+    });
+
+    const form = document.getElementById('entry-edit-form');
+    if (form) form.addEventListener('submit', (ev) => { ev.preventDefault(); saveEntryEditModal(); });
+    const cancel = document.getElementById('entry-edit-cancel');
+    if (cancel) cancel.addEventListener('click', () => closeEntryEditModal());
+    const backdrop = document.getElementById('entry-edit-backdrop');
+    if (backdrop) backdrop.addEventListener('click', () => closeEntryEditModal());
+}
+
+function openEntryEditModal(rec) {
+    const modal = document.getElementById('entry-edit-modal');
+    const fields = document.getElementById('entry-edit-fields');
+    if (!modal || !fields) return;
+    editingEntry = rec;
+    const vals = rec.values || {};
+    // show tracked emotions plus anything this entry already has a value for
+    const tracked = new Set(getTrackedKeys());
+    const keys = getOrderedEmotionKeys([rec]).filter(k => tracked.has(k) || (vals[k] !== null && typeof vals[k] !== 'undefined'));
+
+    fields.innerHTML = '';
+    keys.forEach(k => {
+        const row = document.createElement('div');
+        row.className = 'emotion';
+        row.classList.add('emotion--scale');
+        const label = document.createElement('span');
+        label.className = 'emotion__label';
+        label.id = 'lbl_edit_' + k;
+        label.textContent = LABELS[k] || k;
+        row.appendChild(label);
+        row.appendChild(buildRatingScale(k, 'edit_' + k, label.id, vals[k]));
+        fields.appendChild(row);
+    });
+
+    document.getElementById('entry-edit-time').value = toDateTimeLocal(rec.timestamp);
+    document.getElementById('entry-edit-note').value = vals.note || '';
+    openModal(modal);
+    const first = fields.querySelector('input[type="radio"]:checked') || fields.querySelector('input[type="radio"]') || document.getElementById('entry-edit-time');
+    if (first) first.focus();
+}
+
+function closeEntryEditModal() {
+    const modal = document.getElementById('entry-edit-modal');
+    if (!modal) return;
+    closeModal(modal);
+    editingEntry = null;
+}
+
+async function saveEntryEditModal() {
+    if (!editingEntry) return;
+    const rec = Object.assign({}, editingEntry, { values: Object.assign({}, editingEntry.values) });
+    document.querySelectorAll('#entry-edit-fields input[data-key]').forEach(input => {
+        const n = parseInt(input.value, 10);
+        rec.values[input.dataset.key] = Number.isFinite(n) ? Math.max(1, Math.min(10, n)) : null;
+    });
+    const note = document.getElementById('entry-edit-note').value.trim();
+    rec.values.note = note.length ? note : null;
+    const timeVal = document.getElementById('entry-edit-time').value;
+    const ts = timeVal ? new Date(timeVal).getTime() : NaN;
+    if (Number.isFinite(ts)) rec.timestamp = ts;
+    // an edited entry no longer matches what was exported, so include it in the next unsynced export
+    rec.exported = false;
+    await updateEntry(rec);
+    closeEntryEditModal();
+    await refreshViews();
+    flashMessage('Entry updated');
+}
+
+// ----- Trends chart -----
+
+const LS_TRENDS = 'll_trends_v1';
+
+function getTrendsPrefs() {
+    try {
+        const p = JSON.parse(localStorage.getItem(LS_TRENDS) || '{}');
+        return { days: [7, 30, 90].includes(p.days) ? p.days : 30, key: typeof p.key === 'string' ? p.key : null };
+    } catch (e) { return { days: 30, key: null }; }
+}
+
+function setTrendsPrefs(p) {
+    try { localStorage.setItem(LS_TRENDS, JSON.stringify(p)); } catch (e) { /* ignore */ }
+}
+
+function initTrends() {
+    const section = document.getElementById('view-history');
+    if (!section) return;
+    document.querySelectorAll('#trends-range button[data-days]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+            setTrendsPrefs(Object.assign(getTrendsPrefs(), { days: Number(btn.dataset.days) }));
+            renderTrends(await getAllEntries());
+        });
+    });
+    let resizeTimer = null;
+    window.addEventListener('resize', () => {
+        if (section.hidden) return;
+        clearTimeout(resizeTimer);
+        resizeTimer = setTimeout(async () => renderTrends(await getAllEntries()), 150);
+    });
+    const select = document.getElementById('trends-emotion');
+    if (select) select.addEventListener('change', async () => {
+        setTrendsPrefs(Object.assign(getTrendsPrefs(), { key: select.value }));
+        renderTrends(await getAllEntries());
+    });
+}
+
+// Build per-day averages for one emotion over the last `days` days (today included)
+// `now` defaults to the current time; tests pass a fixed value.
+function computeDailySeries(entries, key, days, now) {
+    const today = new Date(typeof now === 'number' ? now : Date.now());
+    const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
+    const buckets = new Map();
+    (entries || []).forEach(e => {
+        const v = e.values ? e.values[key] : null;
+        if (typeof v !== 'number' || !Number.isFinite(v) || e.timestamp < start.getTime()) return;
+        const k = dayKey(e.timestamp);
+        const b = buckets.get(k) || { sum: 0, count: 0, min: v, max: v };
+        b.sum += v; b.count += 1; b.min = Math.min(b.min, v); b.max = Math.max(b.max, v);
+        buckets.set(k, b);
+    });
+    const series = [];
+    for (let i = 0; i < days; i++) {
+        const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
+        const b = buckets.get(dayKey(d.getTime()));
+        series.push({ date: d, avg: b ? b.sum / b.count : null, count: b ? b.count : 0, min: b ? b.min : null, max: b ? b.max : null });
+    }
+    return series;
+}
+
+function renderTrends(entries) {
+    const select = document.getElementById('trends-emotion');
+    const chart = document.getElementById('trends-chart');
+    const summary = document.getElementById('trends-summary');
+    if (!select || !chart || !summary) return;
+    const prefs = getTrendsPrefs();
+
+    document.querySelectorAll('#trends-range button[data-days]').forEach(btn => {
+        const active = Number(btn.dataset.days) === prefs.days;
+        btn.classList.toggle('is-active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+
+    // options: tracked emotions plus any emotion that has recorded data
+    const tracked = new Set(getTrackedKeys());
+    const withData = new Set();
+    (entries || []).forEach(e => Object.entries(e.values || {}).forEach(([k, v]) => { if (k !== 'note' && typeof v === 'number') withData.add(k); }));
+    const keys = getOrderedEmotionKeys(entries).filter(k => tracked.has(k) || withData.has(k));
+    let key = keys.includes(prefs.key) ? prefs.key : (keys.find(k => withData.has(k)) || keys[0]);
+    select.innerHTML = keys.map(k => `<option value="${escapeHtml(k)}">${escapeHtml(LABELS[k] || k)}</option>`).join('');
+    if (key) select.value = key;
+
+    if (!key) { chart.innerHTML = ''; summary.textContent = 'No emotions to chart yet.'; return; }
+
+    const series = computeDailySeries(entries, key, prefs.days);
+    chart.innerHTML = buildTrendSvg(series, LABELS[key] || key, chart.clientWidth);
+
+    const st = summarizeSeries(series);
+    if (!st) {
+        summary.textContent = `No ${LABELS[key] || key} ratings in the last ${prefs.days} days.`;
+        return;
+    }
+    summary.textContent = `Average ${st.avg.toFixed(1)} · range ${st.min}–${st.max} · ${st.total} ${st.total === 1 ? 'rating' : 'ratings'} on ${st.daysWithData} of ${prefs.days} days`;
+}
+
+// Overall stats for a daily series: rating-weighted average, min, max, counts. null if no data.
+function summarizeSeries(series) {
+    const withVals = (series || []).filter(p => p.avg !== null);
+    if (!withVals.length) return null;
+    const total = withVals.reduce((a, p) => a + p.count, 0);
+    const avg = withVals.reduce((a, p) => a + p.avg * p.count, 0) / total;
+    let min = Infinity, max = -Infinity;
+    withVals.forEach(p => { if (p.min < min) min = p.min; if (p.max > max) max = p.max; });
+    return { avg, min, max, total, daysWithData: withVals.length };
+}
+
+// Dependency-free SVG line chart; scale is fixed at 1–10. Gaps in the data break the line.
+function buildTrendSvg(series, label, width) {
+    // draw at the container's real width so text stays readable on phones
+    const W = Math.max(280, Math.round(width || 640)), H = W < 480 ? 200 : 260;
+    const m = { top: 14, right: 16, bottom: 30, left: 30 };
+    const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
+    const n = series.length;
+    const x = i => m.left + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
+    const y = v => m.top + ih - ((v - 1) / 9) * ih;
+    const fmt = d => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+
+    let grid = '';
+    [1, 4, 7, 10].forEach(v => {
+        grid += `<line class="trend-grid" x1="${m.left}" x2="${W - m.right}" y1="${y(v)}" y2="${y(v)}"/>`;
+        grid += `<text class="trend-axis" x="${m.left - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
+    });
+
+    // x labels: every day for 7 days, otherwise ~6 evenly spaced
+    const maxLabels = W < 480 ? 4 : 6;
+    const step = n <= 7 ? 1 : Math.ceil((n - 1) / (maxLabels - 1));
+    let xLabels = '';
+    for (let i = 0; i < n; i += step) {
+        const d = series[i].date;
+        const text = n <= 7 ? d.toLocaleDateString(undefined, { weekday: 'short' }) : fmt(d);
+        xLabels += `<text class="trend-axis" x="${x(i)}" y="${H - 8}" text-anchor="middle">${escapeHtml(text)}</text>`;
+    }
+
+    // solid line between consecutive days; faint dashed line bridging days with no entries
+    let lines = '';
+    let prev = -1;
+    series.forEach((p, i) => {
+        if (p.avg === null) return;
+        if (prev >= 0) {
+            const cls = i - prev === 1 ? 'trend-line' : 'trend-line trend-line--gap';
+            lines += `<line class="${cls}" x1="${x(prev).toFixed(1)}" y1="${y(series[prev].avg).toFixed(1)}" x2="${x(i).toFixed(1)}" y2="${y(p.avg).toFixed(1)}"/>`;
+        }
+        prev = i;
+    });
+
+    const r = n > 60 ? 3 : 4;
+    const dots = series.map((p, i) => {
+        if (p.avg === null) return '';
+        const tip = `${fmt(p.date)}: ${p.avg.toFixed(1)}` + (p.count > 1 ? ` (avg of ${p.count}, ${p.min}–${p.max})` : '');
+        return `<circle class="trend-dot" cx="${x(i).toFixed(1)}" cy="${y(p.avg).toFixed(1)}" r="${r}"><title>${escapeHtml(tip)}</title></circle>`;
+    }).join('');
+
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(label)} daily average over the last ${n} days" aria-describedby="trends-summary">${grid}${xLabels}${lines}${dots}</svg>`;
 }
 
 document.addEventListener('DOMContentLoaded', initUI);
