@@ -278,12 +278,14 @@ function openDb() {
     });
 }
 
-async function addEntry(values) {
+// `weather` is optional: { status: 'pending' } when weather recording is on.
+async function addEntry(values, weather) {
     const db = await openDb();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
         const record = { timestamp: Date.now(), values, exported: false };
+        if (weather && typeof weather === 'object') record.weather = weather;
         const req = store.add(record);
         req.onsuccess = () => resolve(req.result);
         req.onerror = () => reject(req.error);
@@ -315,11 +317,14 @@ async function clearAllEntries() {
 // Turn one item from an imported JSON file into a record to store.
 // Accepts full exported records ({ timestamp, values, exported }) or a bare values object.
 function normalizeImportRecord(item) {
-    return {
+    const rec = {
         timestamp: item.timestamp || Date.now(),
         values: item.values || item,
         exported: item.exported || false
     };
+    // keep weather from an earlier export
+    if (item.values && item.weather && typeof item.weather === 'object' && !Array.isArray(item.weather)) rec.weather = item.weather;
+    return rec;
 }
 
 async function importEntriesFromArray(arr) {
@@ -408,9 +413,13 @@ function csvEscape(cell) {
     return s;
 }
 
+// Weather columns, added to CSV exports only when some entry has weather (stored units: °F, %, hPa, mm)
+const CSV_WEATHER_COLUMNS = ['weather', 'temp_f', 'humidity_pct', 'pressure_hpa', 'precip_mm'];
+
 // Build a CSV document (CRLF line endings) for the given entries and emotion columns
 function buildCsv(entries, keys) {
-    const headers = ['timestamp', 'id', ...keys];
+    const withWeather = (entries || []).some(e => e && e.weather && e.weather.status === 'ok');
+    const headers = ['timestamp', 'id', ...keys, ...(withWeather ? CSV_WEATHER_COLUMNS : [])];
     const rows = (entries || []).map(e => {
         const vals = e.values || {};
         const row = [new Date(e.timestamp).toISOString(), e.id || ''];
@@ -418,6 +427,11 @@ function buildCsv(entries, keys) {
             const v = vals[k];
             row.push(v === null || typeof v === 'undefined' ? '' : v);
         });
+        if (withWeather) {
+            const w = e.weather && e.weather.status === 'ok' ? e.weather : null;
+            if (!w) row.push('', '', '', '', '');
+            else row.push(weatherCodeInfo(w.code).label, ...['temp', 'humidity', 'pressure', 'precip'].map(m => numOrNull(w[m]) === null ? '' : w[m]));
+        }
         return row.map(csvEscape).join(',');
     });
     return [headers.map(csvEscape).join(','), ...rows].join('\r\n');
@@ -816,6 +830,7 @@ function renderEntriesList(entries) {
         return;
     }
     const shown = entries.slice().sort((a, b) => b.timestamp - a.timestamp).slice(0, historyLimit);
+    const wxUnits = getWeatherSettings().units;
     const html = groupEntriesByDay(shown).map(g => {
         const cards = g.entries.map(e => {
             const time = new Date(e.timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -829,8 +844,10 @@ function renderEntriesList(entries) {
                 ? `<div class="entry-note${long ? ' entry-note--clamped' : ''}"><p class="entry-note__text">${escapeHtml(note)}</p></div>${long ? `<button type="button" class="link-btn" data-action="toggle-note" aria-expanded="false">Show full note</button>` : ''}`
                 : '';
             const exportedBadge = e.exported ? `<span class="badge-exported">Exported</span>` : '';
+            const wxText = weatherSummaryText(e, wxUnits);
+            const wxHtml = wxText ? `<p class="entry__weather${e.weather.status === 'pending' ? ' entry__weather--pending' : ''}">${escapeHtml(wxText)}</p>` : '';
             const actions = `<div class="entry__actions"><button type="button" class="btn-small btn-secondary" data-action="edit" data-id="${e.id}" aria-label="Edit entry from ${escapeHtml(g.heading)} ${escapeHtml(time)}">Edit</button><button type="button" class="btn-small btn-danger" data-action="delete" data-id="${e.id}" aria-label="Delete entry from ${escapeHtml(g.heading)} ${escapeHtml(time)}">Delete</button></div>`;
-            return `<article class="entry"><div class="entry__meta"><span class="entry__time">${escapeHtml(time)}</span>${exportedBadge}</div>${chips}${noteHtml}${actions}</article>`;
+            return `<article class="entry"><div class="entry__meta"><span class="entry__time">${escapeHtml(time)}</span>${exportedBadge}</div>${chips}${wxHtml}${noteHtml}${actions}</article>`;
         }).join('');
         return `<section class="day"><h3 class="day__heading">${escapeHtml(g.heading)}</h3>${cards}</section>`;
     }).join('');
@@ -959,7 +976,9 @@ async function initUI() {
             if (!hasDraftContent(values)) { flashMessage('Rate at least one emotion or add a note', true); return; }
             saving = true;
             try {
-                const id = await addEntry(values);
+                const wxOn = getWeatherSettings().enabled;
+                const id = await addEntry(values, wxOn ? { status: 'pending' } : null);
+                if (wxOn) captureWeatherForEntry(id); // runs in the background; the save doesn't wait
                 clearDraft();
                 // a "Restored your unsaved ratings" toast no longer applies
                 document.querySelectorAll('#toast-region .toast').forEach(t => t.remove());
@@ -1097,6 +1116,7 @@ async function initUI() {
     });
 
     initEntryEditing();
+    initWeather();
     initTrends();
     initViews();
 }
@@ -1362,13 +1382,404 @@ async function saveEntryEditModal() {
     rec.values.note = note.length ? note : null;
     const timeVal = document.getElementById('entry-edit-time').value;
     const ts = timeVal ? new Date(timeVal).getTime() : NaN;
-    if (Number.isFinite(ts)) rec.timestamp = ts;
+    // weather may have arrived while the dialog was open; take the stored copy
+    const stored = await getEntry(rec.id);
+    if (stored && stored.weather) rec.weather = stored.weather;
+    if (Number.isFinite(ts)) {
+        if (rec.weather) rec.weather = weatherAfterTimeEdit(rec.weather, rec.timestamp, ts);
+        rec.timestamp = ts;
+    }
     // an edited entry no longer matches what was exported, so include it in the next unsynced export
     rec.exported = false;
     await updateEntry(rec);
     closeEntryEditModal();
     await refreshViews();
     flashMessage('Entry updated');
+    if (rec.weather && rec.weather.status === 'pending') backfillWeather();
+}
+
+// ----- Weather -----
+// An entry can carry a `weather` object:
+//   { status: 'pending' | 'ok' | 'unavailable', lat, lon, source: 'gps' | 'city',
+//     temp, humidity, pressure, precip, code, attempts }
+// Temperature is stored in °F; the rest metric (%, hPa at sea level, mm in that hour). Converted for display.
+// Weather comes from Open-Meteo (open-meteo.com), which needs no key or account.
+// An entry saved offline stays 'pending' and is filled in from hourly history once online.
+
+const LS_WEATHER = 'll_weather_v1';
+const WX_FIELDS = 'temperature_2m,relative_humidity_2m,pressure_msl,precipitation,weather_code';
+const WX_TEMP_UNIT = 'temperature_unit=fahrenheit'; // Open-Meteo returns °F, which is what we store
+const WX_CURRENT_WINDOW_MS = 30 * 60 * 1000;  // this close to now, use current conditions
+const WX_FORECAST_MAX_AGE_DAYS = 85;          // older than this, use the historical archive
+const WX_MAX_ATTEMPTS = 5;                    // then give up on that entry
+const WX_MAX_REQUESTS_PER_RUN = 10;
+const WX_METRICS = ['temp', 'pressure', 'humidity', 'precip'];
+const WX_METRIC_LABELS = { temp: 'Temperature', pressure: 'Pressure', humidity: 'Humidity', precip: 'Rain' };
+
+// 'us' (°F, in, inHg) where that is the local habit, otherwise 'metric'.
+function defaultWeatherUnits(locale) {
+    const loc = String(locale || (typeof navigator !== 'undefined' && navigator.language) || '');
+    return /-(US|LR|MM)\b/i.test(loc) ? 'us' : 'metric';
+}
+
+function isValidCoord(lat, lon) {
+    return typeof lat === 'number' && typeof lon === 'number' && Number.isFinite(lat) && Number.isFinite(lon)
+        && lat >= -90 && lat <= 90 && lon >= -180 && lon <= 180;
+}
+
+// Two decimals is about 1 km: plenty for weather, and the exact spot is never stored or sent.
+function roundCoord(v) { return Math.round(v * 100) / 100 + 0; }
+
+function getWeatherSettings() {
+    let s = null;
+    try { s = JSON.parse(localStorage.getItem(LS_WEATHER) || 'null'); } catch (e) { s = null; }
+    if (!s || typeof s !== 'object') s = {};
+    const c = s.city;
+    const city = c && typeof c.name === 'string' && c.name.trim() && isValidCoord(c.lat, c.lon)
+        ? { name: c.name.trim(), lat: roundCoord(c.lat), lon: roundCoord(c.lon) } : null;
+    return {
+        enabled: s.enabled === true,
+        units: s.units === 'us' || s.units === 'metric' ? s.units : defaultWeatherUnits(),
+        city,
+        chart: s.chart === 'none' || WX_METRICS.includes(s.chart) ? s.chart : 'temp'
+    };
+}
+
+function setWeatherSettings(patch) {
+    const next = Object.assign(getWeatherSettings(), patch || {});
+    try { localStorage.setItem(LS_WEATHER, JSON.stringify(next)); } catch (e) { return false; }
+    return true;
+}
+
+// The phone's location, rounded, or null if it is unavailable, refused or too slow.
+function getDeviceLocation(timeoutMs) {
+    const wait = timeoutMs || 10000;
+    return new Promise(resolve => {
+        const geo = typeof navigator !== 'undefined' && navigator.geolocation;
+        if (!geo) { resolve(null); return; }
+        let done = false;
+        const finish = v => { if (!done) { done = true; resolve(v); } };
+        setTimeout(() => finish(null), wait + 1000); // some browsers never call back
+        try {
+            geo.getCurrentPosition(
+                p => finish({ lat: p.coords.latitude, lon: p.coords.longitude }),
+                () => finish(null),
+                { enableHighAccuracy: false, timeout: wait, maximumAge: 30 * 60 * 1000 });
+        } catch (e) { finish(null); }
+    });
+}
+
+// Where to look up weather: the phone's location first, then the city typed in Settings.
+// `getDevice` is injectable for tests. Returns { lat, lon, source } or null.
+async function resolveWeatherLocation(settings, getDevice) {
+    const s = settings || getWeatherSettings();
+    let dev = null;
+    try { dev = await (getDevice || getDeviceLocation)(); } catch (e) { dev = null; }
+    if (dev && isValidCoord(dev.lat, dev.lon)) return { lat: roundCoord(dev.lat), lon: roundCoord(dev.lon), source: 'gps' };
+    if (s.city) return { lat: s.city.lat, lon: s.city.lon, source: 'city' };
+    return null;
+}
+
+function utcDay(ts) { return new Date(ts).toISOString().slice(0, 10); }
+
+// The Open-Meteo request for weather at `ts`: { kind: 'current' | 'hourly', url, key }.
+// Entries with the same `key` can share one response. null for a time in the future.
+function buildWeatherRequest(lat, lon, ts, now) {
+    const n = typeof now === 'number' ? now : Date.now();
+    if (!isValidCoord(lat, lon) || !Number.isFinite(ts)) return null;
+    if (ts > n + WX_CURRENT_WINDOW_MS) return null; // not happened yet
+    const loc = `latitude=${lat}&longitude=${lon}`;
+    if (Math.abs(n - ts) <= WX_CURRENT_WINDOW_MS) {
+        const url = `https://api.open-meteo.com/v1/forecast?${loc}&current=${WX_FIELDS}&${WX_TEMP_UNIT}&timezone=GMT`;
+        return { kind: 'current', url, key: url };
+    }
+    const host = (n - ts) / 86400000 > WX_FORECAST_MAX_AGE_DAYS
+        ? 'https://archive-api.open-meteo.com/v1/archive'
+        : 'https://api.open-meteo.com/v1/forecast';
+    // a day either side of the nearest hour, in GMT
+    const url = `${host}?${loc}&hourly=${WX_FIELDS}&${WX_TEMP_UNIT}&start_date=${utcDay(ts - 3600000)}&end_date=${utcDay(ts + 3600000)}&timezone=GMT`;
+    return { kind: 'hourly', url, key: url };
+}
+
+function numOrNull(v) { return typeof v === 'number' && Number.isFinite(v) ? v : null; }
+
+// Pull { temp, humidity, pressure, precip, code } for `ts` out of an Open-Meteo response, or null.
+function parseWeatherResponse(json, kind, ts) {
+    if (!json || typeof json !== 'object') return null;
+    let row = null;
+    if (kind === 'current') {
+        row = json.current && typeof json.current === 'object' ? json.current : null;
+    } else {
+        const h = json.hourly;
+        if (!h || !Array.isArray(h.time)) return null;
+        let best = -1, bestDiff = Infinity;
+        h.time.forEach((t, i) => {
+            const at = Date.parse(/Z$|[+-]\d\d:?\d\d$/.test(t) ? t : t + 'Z'); // GMT times come without a zone
+            const d = Math.abs(at - ts);
+            if (d < bestDiff) { bestDiff = d; best = i; }
+        });
+        if (best < 0 || bestDiff > 60 * 60000) return null;
+        row = {};
+        WX_FIELDS.split(',').forEach(f => { row[f] = Array.isArray(h[f]) ? h[f][best] : null; });
+    }
+    if (!row) return null;
+    const wx = {
+        temp: numOrNull(row.temperature_2m),
+        humidity: numOrNull(row.relative_humidity_2m),
+        pressure: numOrNull(row.pressure_msl),
+        precip: numOrNull(row.precipitation),
+        code: numOrNull(row.weather_code)
+    };
+    return wx.temp === null && wx.pressure === null && wx.humidity === null ? null : wx;
+}
+
+// WMO weather codes as used by Open-Meteo
+function weatherCodeInfo(code) {
+    const c = numOrNull(code);
+    if (c === 0) return { label: 'Clear', icon: '☀️' };
+    if (c === 1) return { label: 'Mostly clear', icon: '🌤️' };
+    if (c === 2) return { label: 'Partly cloudy', icon: '⛅' };
+    if (c === 3) return { label: 'Overcast', icon: '☁️' };
+    if (c === 45 || c === 48) return { label: 'Fog', icon: '🌫️' };
+    if (c >= 51 && c <= 57) return { label: 'Drizzle', icon: '🌦️' };
+    if (c >= 61 && c <= 67) return { label: 'Rain', icon: '🌧️' };
+    if (c >= 71 && c <= 77) return { label: 'Snow', icon: '🌨️' };
+    if (c >= 80 && c <= 82) return { label: 'Showers', icon: '🌦️' };
+    if (c === 85 || c === 86) return { label: 'Snow showers', icon: '🌨️' };
+    if (c >= 95 && c <= 99) return { label: 'Thunderstorm', icon: '⛈️' };
+    return { label: 'Weather', icon: '🌡️' };
+}
+
+// One weather value for an entry in the chosen units, or null.
+function weatherMetricValue(entry, metric, units) {
+    const w = entry && entry.weather;
+    if (!w || w.status !== 'ok' || !WX_METRICS.includes(metric)) return null;
+    const v = numOrNull(w[metric]);
+    if (v === null) return null;
+    if (metric === 'temp') return units === 'us' ? v : (v - 32) * 5 / 9; // stored in °F
+    if (units !== 'us') return v;
+    if (metric === 'pressure') return v * 0.02953;
+    if (metric === 'precip') return v / 25.4;
+    return v;
+}
+
+function weatherUnit(metric, units) {
+    const us = units === 'us';
+    return { temp: us ? '°F' : '°C', pressure: us ? 'inHg' : 'hPa', humidity: '%', precip: us ? 'in' : 'mm' }[metric] || '';
+}
+
+// e.g. "54°F", "1013 hPa", "29.92 inHg", "62%", "0.4 mm"
+function formatWeatherValue(metric, value, units) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) return '';
+    const us = units === 'us';
+    if (metric === 'temp') return `${Math.round(value)}${weatherUnit('temp', units)}`;
+    if (metric === 'humidity') return `${Math.round(value)}%`;
+    if (metric === 'pressure') return us ? `${value.toFixed(2)} inHg` : `${Math.round(value)} hPa`;
+    if (metric === 'precip') return us ? `${value.toFixed(2)} in` : `${value.toFixed(1)} mm`;
+    return String(value);
+}
+
+// The line shown under an entry in History, e.g. "☀️ Clear · 54°F · 62% · 1013 hPa".
+function weatherSummaryText(entry, units) {
+    const w = entry && entry.weather;
+    if (!w) return '';
+    if (w.status === 'pending') return 'Weather pending';
+    if (w.status !== 'ok') return '';
+    const info = weatherCodeInfo(w.code);
+    const parts = [`${info.icon} ${info.label}`];
+    ['temp', 'humidity', 'pressure'].forEach(m => {
+        const v = weatherMetricValue(entry, m, units);
+        if (v !== null) parts.push(formatWeatherValue(m, v, units));
+    });
+    const rain = weatherMetricValue(entry, 'precip', units);
+    if (rain) parts.push(`${formatWeatherValue('precip', rain, units)} rain`);
+    return parts.join(' · ');
+}
+
+// Moving an entry's time by more than half an hour means its weather is for the wrong hour:
+// keep the place and fetch again.
+function weatherAfterTimeEdit(weather, oldTs, newTs) {
+    if (!weather || typeof weather !== 'object') return weather;
+    if (!Number.isFinite(oldTs) || !Number.isFinite(newTs) || Math.abs(newTs - oldTs) <= WX_CURRENT_WINDOW_MS) return weather;
+    const next = { status: 'pending' };
+    if (isValidCoord(weather.lat, weather.lon)) { next.lat = weather.lat; next.lon = weather.lon; next.source = weather.source; }
+    return next;
+}
+
+// Fill in pending weather for `entries` (no storage here, so it is unit tested).
+// Groups entries that can share a response, so a day of offline entries costs one request.
+// Returns { changed: [records to save], requests, offline }.
+async function fillPendingWeather(entries, fetchFn, opts) {
+    const o = opts || {};
+    const now = typeof o.now === 'number' ? o.now : Date.now();
+    const settings = o.settings || getWeatherSettings();
+    const maxRequests = typeof o.maxRequests === 'number' ? o.maxRequests : WX_MAX_REQUESTS_PER_RUN;
+    const groups = new Map();
+    (Array.isArray(entries) ? entries : []).forEach(e => {
+        const w = e && e.weather;
+        if (!w || w.status !== 'pending' || !Number.isFinite(e.timestamp)) return;
+        let loc = isValidCoord(w.lat, w.lon) ? { lat: w.lat, lon: w.lon, source: w.source || 'gps' } : null;
+        if (!loc && settings.city) loc = { lat: settings.city.lat, lon: settings.city.lon, source: 'city' };
+        if (!loc) return; // nothing to look up yet
+        const req = buildWeatherRequest(loc.lat, loc.lon, e.timestamp, now);
+        if (!req) return;
+        if (!groups.has(req.key)) groups.set(req.key, { req, items: [] });
+        groups.get(req.key).items.push({ e, loc });
+    });
+    // newest first: those are the entries someone is most likely looking at
+    const ordered = Array.from(groups.values()).sort((a, b) =>
+        Math.max(...b.items.map(i => i.e.timestamp)) - Math.max(...a.items.map(i => i.e.timestamp)));
+    const changed = [];
+    let requests = 0;
+    const failOne = (e, loc, giveUp) => {
+        const attempts = (e.weather.attempts || 0) + 1;
+        const weather = Object.assign({}, e.weather, loc, { attempts });
+        if (giveUp || attempts >= WX_MAX_ATTEMPTS) weather.status = 'unavailable';
+        changed.push(Object.assign({}, e, { weather }));
+    };
+    for (const g of ordered) {
+        if (requests >= maxRequests) break;
+        requests++;
+        let json;
+        try {
+            const resp = await fetchFn(g.req.url);
+            if (!resp || !resp.ok) {
+                const status = resp ? resp.status : 0;
+                // 400 means Open-Meteo can't answer this request (e.g. a date out of range); don't retry forever
+                g.items.forEach(({ e, loc }) => failOne(e, loc, status === 400));
+                continue;
+            }
+            json = await resp.json();
+        } catch (err) {
+            return { changed, requests, offline: true }; // network gone: try again later
+        }
+        g.items.forEach(({ e, loc }) => {
+            const wx = parseWeatherResponse(json, g.req.kind, e.timestamp);
+            if (!wx) { failOne(e, loc, false); return; }
+            const weather = Object.assign({ status: 'ok', lat: loc.lat, lon: loc.lon, source: loc.source }, wx);
+            changed.push(Object.assign({}, e, { weather }));
+        });
+    }
+    return { changed, requests, offline: false };
+}
+
+let wxBackfillRunning = false;
+
+// Look up weather for every pending entry and save it. Safe to call often.
+async function backfillWeather(opts) {
+    const o = opts || {};
+    if (wxBackfillRunning) return null;
+    if (!o.fetchFn && typeof navigator !== 'undefined' && navigator.onLine === false) return null;
+    const fetchFn = o.fetchFn || (typeof fetch === 'function' ? fetch : null);
+    if (!fetchFn) return null;
+    wxBackfillRunning = true;
+    try {
+        const result = await fillPendingWeather(await getAllEntries(), fetchFn, o);
+        for (const rec of result.changed) {
+            // don't overwrite a record that was deleted meanwhile
+            const current = await getEntry(rec.id);
+            if (current && current.weather && current.weather.status === 'pending') {
+                await updateEntry(Object.assign({}, current, { weather: rec.weather }));
+            }
+        }
+        if (result.changed.length && !o.quiet) await refreshViews();
+        return result;
+    } catch (e) {
+        console.error(e);
+        return null;
+    } finally {
+        wxBackfillRunning = false;
+    }
+}
+
+// Right after a save: note where the entry was made, then try to fetch its weather.
+async function captureWeatherForEntry(id) {
+    try {
+        const loc = await resolveWeatherLocation();
+        const rec = await getEntry(id);
+        if (!rec || !rec.weather || rec.weather.status !== 'pending') return;
+        if (loc) {
+            await updateEntry(Object.assign({}, rec, { weather: Object.assign({}, rec.weather, loc) }));
+        } else {
+            flashMessage('Couldn\'t get your location. Add a city in Settings to record weather.', true);
+            return;
+        }
+        await backfillWeather();
+    } catch (e) { console.error(e); }
+}
+
+// Look up a typed city with Open-Meteo's geocoding. Returns { name, lat, lon } or null.
+async function geocodeCity(name, fetchFn) {
+    const q = String(name || '').trim();
+    if (!q) return null;
+    const f = fetchFn || fetch;
+    const resp = await f(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(q)}&count=1&format=json`);
+    if (!resp || !resp.ok) throw new Error('Lookup failed');
+    const data = await resp.json();
+    const r = data && Array.isArray(data.results) ? data.results[0] : null;
+    if (!r || !isValidCoord(r.latitude, r.longitude)) return null;
+    const label = [r.name, r.admin1, r.country_code || r.country].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i).join(', ');
+    return { name: label || q, lat: roundCoord(r.latitude), lon: roundCoord(r.longitude) };
+}
+
+function renderWeatherSettings() {
+    const s = getWeatherSettings();
+    const enabled = document.getElementById('weather-enabled');
+    if (!enabled) return;
+    enabled.checked = s.enabled;
+    const units = document.getElementById('weather-units');
+    if (units) units.value = s.units;
+    const city = document.getElementById('weather-city');
+    if (city && document.activeElement !== city) city.value = s.city ? s.city.name : '';
+    const status = document.getElementById('weather-city-status');
+    if (status) status.textContent = s.city ? `Using ${s.city.name} when your location isn't available.` : 'No city set.';
+}
+
+function initWeather() {
+    const enabled = document.getElementById('weather-enabled');
+    if (enabled) enabled.addEventListener('change', async () => {
+        setWeatherSettings({ enabled: enabled.checked });
+        if (!enabled.checked) { flashMessage('Weather recording off'); return; }
+        // ask for location now, while it's clear why, rather than on the next save
+        const loc = await getDeviceLocation();
+        if (loc) flashMessage('Weather will be saved with each entry');
+        else if (getWeatherSettings().city) flashMessage(`Location unavailable. Using ${getWeatherSettings().city.name}.`);
+        else flashMessage('Location unavailable. Add your city below to record weather.', true);
+    });
+    const units = document.getElementById('weather-units');
+    if (units) units.addEventListener('change', async () => {
+        setWeatherSettings({ units: units.value });
+        await refreshViews();
+    });
+    const city = document.getElementById('weather-city');
+    const findBtn = document.getElementById('weather-city-find');
+    const status = document.getElementById('weather-city-status');
+    const find = async () => {
+        if (!city) return;
+        const q = city.value.trim();
+        if (!q) { setWeatherSettings({ city: null }); renderWeatherSettings(); return; }
+        if (status) status.textContent = 'Looking up…';
+        try {
+            const found = await geocodeCity(q);
+            if (!found) { if (status) status.textContent = `Couldn't find "${q}". Try adding the state or country.`; return; }
+            setWeatherSettings({ city: found });
+            city.value = found.name;
+            renderWeatherSettings();
+            backfillWeather();
+        } catch (e) {
+            if (status) status.textContent = 'Couldn\'t look up the city. Check your connection and try again.';
+        }
+    };
+    if (findBtn) findBtn.addEventListener('click', find);
+    if (city) city.addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); find(); } });
+    const overlay = document.getElementById('trends-weather');
+    if (overlay) overlay.addEventListener('change', async () => {
+        setWeatherSettings({ chart: overlay.value });
+        renderTrends(await getAllEntries());
+    });
+    renderWeatherSettings();
+    window.addEventListener('online', () => backfillWeather());
+    setTimeout(() => backfillWeather(), 1500);
 }
 
 // ----- Trends chart -----
@@ -1411,11 +1822,17 @@ function initTrends() {
 // Build per-day averages for one emotion over the last `days` days (today included)
 // `now` defaults to the current time; tests pass a fixed value.
 function computeDailySeries(entries, key, days, now) {
+    return computeDailyValues(entries, e => (e.values ? e.values[key] : null), days, now);
+}
+
+// Daily buckets of any per-entry number (`getValue(entry)` returns a number or null).
+// Each point: { date, avg, count, min, max, sum }.
+function computeDailyValues(entries, getValue, days, now) {
     const today = new Date(typeof now === 'number' ? now : Date.now());
     const start = new Date(today.getFullYear(), today.getMonth(), today.getDate() - (days - 1));
     const buckets = new Map();
     (entries || []).forEach(e => {
-        const v = e.values ? e.values[key] : null;
+        const v = e ? getValue(e) : null;
         if (typeof v !== 'number' || !Number.isFinite(v) || e.timestamp < start.getTime()) return;
         const k = dayKey(e.timestamp);
         const b = buckets.get(k) || { sum: 0, count: 0, min: v, max: v };
@@ -1426,9 +1843,40 @@ function computeDailySeries(entries, key, days, now) {
     for (let i = 0; i < days; i++) {
         const d = new Date(start.getFullYear(), start.getMonth(), start.getDate() + i);
         const b = buckets.get(dayKey(d.getTime()));
-        series.push({ date: d, avg: b ? b.sum / b.count : null, count: b ? b.count : 0, min: b ? b.min : null, max: b ? b.max : null });
+        series.push({ date: d, avg: b ? b.sum / b.count : null, count: b ? b.count : 0, min: b ? b.min : null, max: b ? b.max : null, sum: b ? b.sum : null });
     }
     return series;
+}
+
+// Daily weather for the chart: [{ date, value }] where value is the day's average,
+// or its total for rain. null on days without weather.
+function computeDailyWeather(entries, metric, units, days, now) {
+    const pts = computeDailyValues(entries, e => weatherMetricValue(e, metric, units), days, now);
+    // rain per entry is that hour's rain, so the day's figure is an average hourly amount
+    return pts.map(p => ({ date: p.date, value: p.avg, count: p.count }));
+}
+
+// Round axis ticks covering [lo, hi]: { min, max, ticks }. Rain axes start at 0. null without data.
+function weatherAxis(values, metric) {
+    const vals = (values || []).filter(v => typeof v === 'number' && Number.isFinite(v));
+    if (!vals.length) return null;
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (metric === 'precip') lo = 0;
+    if (metric === 'humidity') { lo = Math.max(0, lo); hi = Math.min(100, hi); }
+    if (hi - lo < 1e-9) {
+        const pad = metric === 'precip' ? Math.max(hi, 0.1) : Math.max(Math.abs(hi) * 0.01, metric === 'pressure' ? 0.1 : 1);
+        if (metric !== 'precip') lo -= pad;
+        hi += pad;
+    }
+    const raw = (hi - lo) / 3;
+    const mag = Math.pow(10, Math.floor(Math.log10(raw)));
+    const step = [1, 2, 2.5, 5, 10].map(f => f * mag).find(st => st >= raw);
+    const min = Math.floor(lo / step + 1e-9) * step;
+    const max = Math.ceil(hi / step - 1e-9) * step;
+    const decimals = Math.max(0, -Math.floor(Math.log10(step) + 1e-9) + (step / mag === 2.5 ? 1 : 0));
+    const ticks = [];
+    for (let t = min; t <= max + step / 2; t += step) ticks.push(Number(t.toFixed(decimals)));
+    return { min: ticks[0], max: ticks[ticks.length - 1], ticks, decimals };
 }
 
 function renderTrends(entries) {
@@ -1456,14 +1904,42 @@ function renderTrends(entries) {
     if (!key) { chart.innerHTML = ''; summary.textContent = 'No emotions to chart yet.'; return; }
 
     const series = computeDailySeries(entries, key, prefs.days);
-    chart.innerHTML = buildTrendSvg(series, LABELS[key] || key, chart.clientWidth);
+
+    // weather overlay: only offered once some entry has weather
+    const wx = getWeatherSettings();
+    const hasWeather = (entries || []).some(e => e && e.weather && e.weather.status === 'ok');
+    const wxWrap = document.getElementById('trends-weather-wrap');
+    const wxSelect = document.getElementById('trends-weather');
+    if (wxWrap) wxWrap.hidden = !hasWeather;
+    if (wxSelect) wxSelect.value = wx.chart;
+    let overlay = null;
+    if (hasWeather && wx.chart !== 'none') {
+        overlay = { metric: wx.chart, units: wx.units, label: WX_METRIC_LABELS[wx.chart], series: computeDailyWeather(entries, wx.chart, wx.units, prefs.days) };
+        if (!overlay.series.some(p => p.value !== null)) overlay.series = null;
+    }
+    chart.innerHTML = buildTrendSvg(series, LABELS[key] || key, chart.clientWidth, overlay);
+    const legend = document.getElementById('trends-legend');
+    if (legend) {
+        legend.hidden = !overlay;
+        legend.innerHTML = overlay
+            ? `<span class="trends__key"><span class="trends__swatch" aria-hidden="true"></span>${escapeHtml(LABELS[key] || key)} (1–10, left)</span>`
+              + `<span class="trends__key"><span class="trends__swatch trends__swatch--wx${overlay.metric === 'precip' ? ' trends__swatch--bar' : ''}" aria-hidden="true"></span>${escapeHtml(overlay.label)} (${escapeHtml(weatherUnit(overlay.metric, overlay.units))}, right)</span>`
+              + (overlay.series ? '' : `<span class="trends__key">No weather in this range yet</span>`)
+            : '';
+    }
 
     const st = summarizeSeries(series);
+    let wxSummary = '';
+    if (overlay && overlay.series) {
+        const vals = overlay.series.filter(p => p.value !== null);
+        const avg = vals.reduce((a, p) => a + p.value * p.count, 0) / vals.reduce((a, p) => a + p.count, 0);
+        wxSummary = ` · ${overlay.label.toLowerCase()} averaged ${formatWeatherValue(overlay.metric, avg, overlay.units)}${overlay.metric === 'precip' ? ' an hour' : ''}`;
+    }
     if (!st) {
         summary.textContent = `No ${LABELS[key] || key} ratings in the last ${prefs.days} days.`;
         return;
     }
-    summary.textContent = `Average ${st.avg.toFixed(1)} · range ${st.min}–${st.max} · ${st.total} ${st.total === 1 ? 'rating' : 'ratings'} on ${st.daysWithData} of ${prefs.days} days`;
+    summary.textContent = `Average ${st.avg.toFixed(1)} · range ${st.min}–${st.max} · ${st.total} ${st.total === 1 ? 'rating' : 'ratings'} on ${st.daysWithData} of ${prefs.days} days${wxSummary}`;
 }
 
 // Overall stats for a daily series: rating-weighted average, min, max, counts. null if no data.
@@ -1478,10 +1954,13 @@ function summarizeSeries(series) {
 }
 
 // Dependency-free SVG line chart; scale is fixed at 1–10. Gaps in the data break the line.
-function buildTrendSvg(series, label, width) {
+// `overlay` (optional) = { metric, units, label, series: [{ date, value }] } draws weather on a right-hand axis.
+function buildTrendSvg(series, label, width, overlay) {
     // draw at the container's real width so text stays readable on phones
     const W = Math.max(280, Math.round(width || 640)), H = W < 480 ? 200 : 260;
-    const m = { top: 14, right: 16, bottom: 30, left: 30 };
+    const wxSeries = overlay && Array.isArray(overlay.series) && overlay.series.length === series.length ? overlay.series : null;
+    const axis = wxSeries ? weatherAxis(wxSeries.map(p => p.value), overlay.metric) : null;
+    const m = { top: 14, right: axis ? 46 : 16, bottom: 30, left: 30 };
     const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
     const n = series.length;
     const x = i => m.left + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
@@ -1516,6 +1995,39 @@ function buildTrendSvg(series, label, width) {
         prev = i;
     });
 
+    // weather goes underneath the mood line
+    let wx = '';
+    if (axis) {
+        const yw = v => m.top + ih - ((v - axis.min) / (axis.max - axis.min)) * ih;
+        const short = { temp: '°', humidity: '%', pressure: '', precip: '' }[overlay.metric] || '';
+        axis.ticks.forEach(t => {
+            wx += `<text class="trend-axis trend-axis--wx" x="${W - m.right + 6}" y="${(yw(t) + 4).toFixed(1)}" text-anchor="start">${escapeHtml(t.toFixed(axis.decimals) + short)}</text>`;
+        });
+        const tipFor = p => `${fmt(p.date)}: ${overlay.label} ${formatWeatherValue(overlay.metric, p.value, overlay.units)}${overlay.metric === 'precip' ? ' an hour' : ''}`;
+        if (overlay.metric === 'precip') {
+            const bw = Math.max(2, Math.min(14, (iw / n) * 0.6));
+            wxSeries.forEach((p, i) => {
+                if (p.value === null || p.value <= 0) return; // dry days: no bar
+                const top = yw(p.value), base = yw(axis.min);
+                wx += `<rect class="trend-wx-bar" x="${(x(i) - bw / 2).toFixed(1)}" y="${top.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(1, base - top).toFixed(1)}"><title>${escapeHtml(tipFor(p))}</title></rect>`;
+            });
+        } else {
+            let pw = -1;
+            wxSeries.forEach((p, i) => {
+                if (p.value === null) return;
+                if (pw >= 0) {
+                    const cls = i - pw === 1 ? 'trend-wx-line' : 'trend-wx-line trend-line--gap';
+                    wx += `<line class="${cls}" x1="${x(pw).toFixed(1)}" y1="${yw(wxSeries[pw].value).toFixed(1)}" x2="${x(i).toFixed(1)}" y2="${yw(p.value).toFixed(1)}"/>`;
+                }
+                pw = i;
+            });
+            wxSeries.forEach((p, i) => {
+                if (p.value === null) return;
+                wx += `<circle class="trend-wx-dot" cx="${x(i).toFixed(1)}" cy="${yw(p.value).toFixed(1)}" r="3"><title>${escapeHtml(tipFor(p))}</title></circle>`;
+            });
+        }
+    }
+
     const r = n > 60 ? 3 : 4;
     const dots = series.map((p, i) => {
         if (p.avg === null) return '';
@@ -1523,7 +2035,8 @@ function buildTrendSvg(series, label, width) {
         return `<circle class="trend-dot" cx="${x(i).toFixed(1)}" cy="${y(p.avg).toFixed(1)}" r="${r}"><title>${escapeHtml(tip)}</title></circle>`;
     }).join('');
 
-    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(label)} daily average over the last ${n} days" aria-describedby="trends-summary">${grid}${xLabels}${lines}${dots}</svg>`;
+    const aria = `${label} daily average over the last ${n} days` + (axis ? `, with daily ${overlay.label.toLowerCase()}` : '');
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(aria)}" aria-describedby="trends-summary">${grid}${xLabels}${wx}${lines}${dots}</svg>`;
 }
 
 document.addEventListener('DOMContentLoaded', initUI);

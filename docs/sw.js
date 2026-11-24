@@ -1,5 +1,5 @@
 // service worker for docs/ site (use relative paths so it works on GitHub Pages project sites)
-const CACHE_NAME = 'emotion-tracker-v31';
+const CACHE_NAME = 'emotion-tracker-v32';
 const ASSETS = [
   './',
   'index.html',
@@ -39,6 +39,10 @@ self.addEventListener('message', event => {
 });
 
 self.addEventListener('fetch', event => {
+  // Only handle this site's own files. Weather lookups and other cross-origin
+  // requests go straight to the network, so stale weather is never served from cache.
+  if (new URL(event.request.url).origin !== self.location.origin) return;
+
   // For navigation requests, try network then fallback to cached index.html
   if (event.request.mode === 'navigate') {
     event.respondWith(

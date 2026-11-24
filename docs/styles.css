@@ -17,6 +17,7 @@
     --chip-border: rgba(46,125,50,0.25);
     --toast-bg: #2c3e50;
     --toast-error: #c0392b;
+    --wx: #1565c0;
 }
 
 /* Honor the HTML hidden attribute: ensure hidden elements are not displayed */
@@ -42,6 +43,7 @@ html.dark{
     --chip-border: rgba(87,211,123,0.25);
     --toast-bg: #e6eef6;
     --toast-error: #e0645a;
+    --wx: #7cb8f2;
 }
 
 *{box-sizing:border-box}
@@ -432,3 +434,27 @@ html.dark .link-btn { color: var(--accent); }
     .show-keys .cat-edit__emotion { flex-wrap: wrap; }
     .show-keys .cat-edit__key { flex: 1 1 100%; order: 3; margin-left: 44px; }
 }
+
+/* ----- Weather ----- */
+.trends__weather { display: flex; align-items: center; gap: 8px; flex: 1 1 180px; max-width: 260px; }
+.trends__weather[hidden] { display: none; }
+#trends-weather { flex: 1 1 auto; min-width: 0; padding:6px 8px; font-size:0.95rem; border-radius:6px; border:1px solid var(--grid); background: var(--input-bg); color: var(--text); }
+.trend-axis--wx { fill: var(--wx); }
+.trend-wx-line { fill: none; stroke: var(--wx); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.trend-wx-dot { fill: var(--wx); stroke: var(--card); stroke-width: 1; }
+.trend-wx-bar { fill: var(--wx); opacity: 0.45; }
+.trends__legend { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 16px; margin: 6px 0 0; font-size: 0.85rem; color: var(--muted); }
+.trends__legend[hidden] { display: none; }
+.trends__key { display: inline-flex; align-items: center; gap: 6px; }
+.trends__swatch { display: inline-block; width: 18px; height: 3px; border-radius: 2px; background: var(--accent); }
+.trends__swatch--wx { background: var(--wx); }
+.trends__swatch--bar { width: 10px; height: 10px; opacity: 0.6; }
+.entry__weather { margin: 8px 0 0; font-size: 0.9rem; color: var(--text); }
+.entry__weather--pending { color: var(--muted); font-style: italic; }
+.card label.field-label { display: block; width: auto; min-width: 0; margin: 12px 0 6px; }
+.field-label__hint { font-weight: 400; color: var(--muted); font-size: 0.85rem; }
+.city-row { display: flex; gap: 8px; }
+.city-row input[type="text"] { flex: 1 1 auto; min-width: 0; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--input-bg); color: var(--text); font-size: 1rem; }
+.card #weather-city-status { margin: 6px 0 0; }
+.field-select { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--input-bg); color: var(--text); font-size: 1rem; }
+.card a { color: var(--accent); }
