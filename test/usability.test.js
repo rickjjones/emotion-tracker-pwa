@@ -76,7 +76,8 @@ describe('Rating scale legend', () => {
         const hint = get('SCALE_HINT');
         assert.match(hint, /1 \(not at all\)/);
         assert.match(hint, /10 \(extremely\)/);
-        assert.match(hint, /blank/);
+        assert.match(hint, /skip/i);
+        assert.match(hint, /tap a number again to clear/);
     });
 });
 
