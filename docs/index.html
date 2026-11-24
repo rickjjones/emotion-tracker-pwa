@@ -43,6 +43,15 @@
         <!-- The form is rendered dynamically by app.js based on selected categories/emotions -->
         <form id="emotion-form"></form>
 
+        <!-- Shown in place of the form right after a save -->
+        <div id="saved-summary" class="saved-summary" hidden>
+            <p id="saved-summary-text" class="saved-summary__text"></p>
+            <div class="saved-summary__actions">
+                <button id="saved-edit" type="button" class="btn-secondary">Edit this entry</button>
+                <button id="saved-log-another" type="button">Log another</button>
+            </div>
+        </div>
+
         <!-- Categories / emotion selection modal -->
         <div id="categories-modal" class="modal" hidden aria-hidden="true">
             <div class="modal__backdrop" id="categories-backdrop"></div>
@@ -148,8 +157,12 @@
 
                     const actions = document.createElement('div');
 
+                    // Never auto-reload over a half-filled form: wait for the person to choose.
+                    const busy = typeof hasUnsavedInput === 'function' && hasUnsavedInput();
+                    if (busy) msg.textContent = 'A new version is available. Reload when you are ready.';
+
                     let seconds = 10;
-                    const countdown = setInterval(() => {
+                    const countdown = busy ? null : setInterval(() => {
                         seconds -= 1;
                         msg.textContent = `A new version is available. Reloading in ${seconds}s...`;
                         if (seconds <= 0) {
@@ -170,7 +183,7 @@
 
                     const cancelBtn = document.createElement('button');
                     cancelBtn.className = 'sw-update__btn sw-update__btn--secondary';
-                    cancelBtn.textContent = 'Cancel';
+                    cancelBtn.textContent = busy ? 'Later' : 'Cancel';
                     cancelBtn.addEventListener('click', () => {
                         clearInterval(countdown);
                         bar.remove();

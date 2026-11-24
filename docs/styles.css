@@ -321,3 +321,34 @@ html.dark .toast--error { color: #0b1220; }
     button, input[type="number"], input[type="text"], input[type="datetime-local"], select { min-height: 44px; }
     .toast__action { min-height: 44px; }
 }
+
+/* 1-10 tap scale: native radios, visually replaced by numbered segments */
+.emotion--scale { flex-wrap: wrap; }
+.emotion__label { display:block; font-weight:bold; width:32%; min-width:100px; }
+.scale { flex: 1; display: flex; gap: 4px; min-width: 0; }
+/* beat the generic `label` and `form .emotion label` rules */
+.scale label.scale__opt, form .emotion .scale label.scale__opt { position: relative; flex: 1 1 0; min-width: 0; margin: 0; width: auto; font-weight: 600; }
+.scale__opt input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; cursor: pointer; }
+.scale__opt span {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 44px; border-radius: 8px;
+    border: 1px solid var(--grid); background: var(--input-bg); color: var(--text);
+    font-size: 0.95rem; user-select: none;
+}
+.scale__opt input:checked + span { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.scale__opt input:focus-visible + span { outline: 3px solid var(--accent); outline-offset: 2px; }
+.scale__opt:hover span { filter: brightness(.96); }
+@media (max-width: 520px) {
+    form .emotion.emotion--scale, .emotion.emotion--scale { flex-direction: column; align-items: stretch; gap: 6px; }
+    .emotion__label { width: 100%; }
+    .scale { gap: 3px; }
+    /* reclaim side padding so ten segments fit a 360px phone */
+    body { padding: 8px; }
+    .container { margin: 8px auto; padding: 12px; }
+}
+
+/* Post-save summary */
+.saved-summary { margin: 12px 0; padding: 16px; border-radius: 10px; border: 1px solid var(--chip-border); background: var(--chip-bg); color: var(--chip-text); text-align: center; }
+.saved-summary__text { margin: 0 0 12px; font-weight: 600; font-size: 1.05rem; }
+.saved-summary__actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+.btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--grid); }

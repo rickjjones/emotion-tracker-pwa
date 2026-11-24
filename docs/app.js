@@ -40,7 +40,7 @@ const LABELS = {
 const DEFAULT_LABELS = Object.assign({}, LABELS);
 
 // Shown above the rating form so the 1-10 scale has fixed anchors
-const SCALE_HINT = 'Rate each from 1 (not at all) to 10 (extremely). Leave a box blank to skip it.';
+const SCALE_HINT = 'Rate each from 1 (not at all) to 10 (extremely). Skip any you don\'t want to rate, and tap a number again to clear it.';
 
 // Wording for the Clear All confirmation: say how much will be lost and how to keep it.
 function clearAllConfirmText(count) {
@@ -48,6 +48,112 @@ function clearAllConfirmText(count) {
     if (n === 0) return 'There are no entries to delete.';
     const what = n === 1 ? 'your 1 entry' : `all ${n} entries`;
     return `Delete ${what}? This cannot be undone. Use Export JSON first if you want a backup.`;
+}
+
+// ----- Rating scale, draft autosave, post-save summary -----
+
+// Build a 1-10 tap scale. The value lives in a hidden input with id `inputId`
+// (and data-key), so code that reads inputs by id keeps working. Native radios
+// give arrow-key navigation for free; tapping the selected number clears it.
+function buildRatingScale(key, inputId, labelId, value) {
+    const wrap = document.createElement('div');
+    wrap.className = 'scale';
+    wrap.setAttribute('role', 'radiogroup');
+    wrap.setAttribute('aria-labelledby', labelId);
+    wrap.setAttribute('aria-describedby', 'scale-hint');
+    const hidden = document.createElement('input');
+    hidden.type = 'hidden';
+    hidden.id = inputId;
+    hidden.name = inputId;
+    hidden.dataset.key = key;
+    hidden.value = value === null || typeof value === 'undefined' ? '' : String(value);
+    wrap.appendChild(hidden);
+    for (let n = 1; n <= 10; n++) {
+        const opt = document.createElement('label');
+        opt.className = 'scale__opt';
+        const radio = document.createElement('input');
+        radio.type = 'radio';
+        radio.name = 'r_' + inputId;
+        radio.value = String(n);
+        radio.checked = hidden.value === String(n);
+        radio.setAttribute('aria-label', String(n));
+        radio.addEventListener('click', () => {
+            if (hidden.value === radio.value) { radio.checked = false; hidden.value = ''; }
+            else hidden.value = radio.value;
+            hidden.dispatchEvent(new Event('input', { bubbles: true }));
+        });
+        const face = document.createElement('span');
+        face.textContent = String(n);
+        face.setAttribute('aria-hidden', 'true');
+        opt.appendChild(radio);
+        opt.appendChild(face);
+        wrap.appendChild(opt);
+    }
+    return wrap;
+}
+
+// Set a scale built by buildRatingScale to `value` (null clears it).
+function setScaleValue(inputId, value) {
+    const hidden = document.getElementById(inputId);
+    if (!hidden) return;
+    const v = value === null || typeof value === 'undefined' ? '' : String(value);
+    hidden.value = v;
+    document.querySelectorAll(`input[name="r_${inputId}"]`).forEach(r => { r.checked = r.value === v; });
+}
+
+const LS_DRAFT = 'll_draft_v1';
+const DRAFT_MAX_AGE_MS = 12 * 60 * 60 * 1000; // an older draft is probably stale
+
+// True if a values object holds at least one rating or a note.
+function hasDraftContent(values) {
+    if (!values || typeof values !== 'object') return false;
+    return Object.entries(values).some(([k, v]) => k === 'note'
+        ? typeof v === 'string' && v.trim().length > 0
+        : typeof v === 'number' && Number.isFinite(v));
+}
+
+// Keep unsaved form values so a reload or update doesn't lose them. Empty values remove the draft.
+function saveDraft(values, now) {
+    try {
+        if (!hasDraftContent(values)) { localStorage.removeItem(LS_DRAFT); return false; }
+        localStorage.setItem(LS_DRAFT, JSON.stringify({ savedAt: typeof now === 'number' ? now : Date.now(), values }));
+        return true;
+    } catch (e) { return false; }
+}
+
+// The saved draft's values, or null if none, unreadable, empty or older than DRAFT_MAX_AGE_MS.
+function loadDraft(now) {
+    try {
+        const d = JSON.parse(localStorage.getItem(LS_DRAFT) || 'null');
+        if (!d || typeof d.savedAt !== 'number' || !d.values || typeof d.values !== 'object') return null;
+        const t = typeof now === 'number' ? now : Date.now();
+        if (t - d.savedAt > DRAFT_MAX_AGE_MS || d.savedAt > t + 60000) return null;
+        return hasDraftContent(d.values) ? d.values : null;
+    } catch (e) { return null; }
+}
+
+function clearDraft() {
+    try { localStorage.removeItem(LS_DRAFT); } catch (e) { /* ignore */ }
+}
+
+// e.g. "Saved 2 ratings and a note at 9:14 PM."
+function savedSummaryText(values, ts) {
+    const vals = values || {};
+    const ratings = Object.entries(vals).filter(([k, v]) => k !== 'note' && typeof v === 'number' && Number.isFinite(v)).length;
+    const hasNote = typeof vals.note === 'string' && vals.note.trim().length > 0;
+    const parts = [];
+    if (ratings) parts.push(ratings === 1 ? '1 rating' : `${ratings} ratings`);
+    if (hasNote) parts.push('a note');
+    const what = parts.length ? parts.join(' and ') : 'an empty entry';
+    const time = new Date(typeof ts === 'number' ? ts : Date.now()).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    return `Saved ${what} at ${time}.`;
+}
+
+// Used by the update banner: don't auto-reload over a half-filled form.
+function hasUnsavedInput() {
+    const form = document.getElementById('emotion-form');
+    if (!form || form.hidden) return false;
+    return hasDraftContent(formToValues());
 }
 
 // localStorage key for tracked emotion keys
@@ -642,19 +748,14 @@ function renderEmotionForm() {
             if (!tracked.has(k)) return;
             const row = document.createElement('div');
             row.className = 'emotion';
-            const label = document.createElement('label');
-            label.setAttribute('for', k);
+            row.classList.add('emotion--scale');
+            // a radiogroup is named by aria-labelledby, so this is a plain text label
+            const label = document.createElement('span');
+            label.className = 'emotion__label';
+            label.id = 'lbl_' + k;
             label.textContent = LABELS[k] || k;
-            const input = document.createElement('input');
-            input.type = 'number';
-            input.id = k;
-            input.name = k;
-            input.min = 1;
-            input.max = 10;
-            input.inputMode = 'numeric'; // number pad instead of the full keyboard on phones
-            input.setAttribute('aria-describedby', 'scale-hint');
             row.appendChild(label);
-            row.appendChild(input);
+            row.appendChild(buildRatingScale(k, k, label.id, null));
             form.appendChild(row);
         });
     });
@@ -679,6 +780,15 @@ function renderEmotionForm() {
     submit.type = 'submit';
     submit.textContent = 'Save Emotions';
     form.appendChild(submit);
+
+    // bring back anything typed before a reload, re-render or app update
+    const draft = loadDraft();
+    if (draft) {
+        Object.entries(draft).forEach(([k, v]) => {
+            if (k === 'note') noteField.value = v || '';
+            else if (tracked.has(k)) setScaleValue(k, v);
+        });
+    }
 
     // wire submit handler (existing initUI also attaches to form submit)
 }
@@ -744,23 +854,76 @@ function escapeHtml(str) {
     });
 }
 
+// After saving, swap the form for a one-line summary so the save is obvious
+// and a second tap can't create a duplicate entry.
+function showSavedSummary(id, values, ts) {
+    const panel = document.getElementById('saved-summary');
+    const form = document.getElementById('emotion-form');
+    if (!panel || !form) { flashMessage('Saved'); return; }
+    document.getElementById('saved-summary-text').textContent = savedSummaryText(values, ts);
+    document.getElementById('saved-edit').dataset.id = String(id);
+    form.hidden = true;
+    panel.hidden = false;
+    document.getElementById('saved-log-another').focus();
+}
+
+function hideSavedSummary(focusForm) {
+    const panel = document.getElementById('saved-summary');
+    const form = document.getElementById('emotion-form');
+    if (panel) panel.hidden = true;
+    if (form) {
+        form.hidden = false;
+        if (focusForm) {
+            const first = form.querySelector('input[type="radio"], textarea');
+            if (first) first.focus();
+        }
+    }
+}
+
 async function initUI() {
     const form = document.getElementById('emotion-form');
     // render form according to tracked emotions
     renderEmotionForm();
     if (form) {
+        let saving = false;
         form.addEventListener('submit', async (ev) => {
             ev.preventDefault();
+            if (saving) return; // ignore a double tap while the first save runs
             const values = formToValues();
-            await addEntry(values);
-    getAllEmotionKeys().forEach(k => {
-        const el = document.getElementById(k);
-        if (el) el.value = '';
+            if (!hasDraftContent(values)) { flashMessage('Rate at least one emotion or add a note', true); return; }
+            saving = true;
+            try {
+                const id = await addEntry(values);
+                clearDraft();
+                // a "Restored your unsaved ratings" toast no longer applies
+                document.querySelectorAll('#toast-region .toast').forEach(t => t.remove());
+                renderEmotionForm(); // fresh, empty form for next time
+                showSavedSummary(id, values, Date.now());
+                await refreshViews();
+            } catch (err) {
+                console.error(err);
+                flashMessage('Could not save. Your ratings are still here.', true);
+            } finally {
+                saving = false;
+            }
         });
-            await refreshViews();
-            flashMessage('Saved');
+        // autosave a draft as the person rates or types
+        const persist = () => saveDraft(formToValues());
+        form.addEventListener('input', persist);
+        form.addEventListener('change', persist);
+        if (loadDraft()) flashMessage('Restored your unsaved ratings', false, {
+            label: 'Discard',
+            onClick: () => { clearDraft(); renderEmotionForm(); }
         });
     }
+
+    const logAnother = document.getElementById('saved-log-another');
+    if (logAnother) logAnother.addEventListener('click', () => hideSavedSummary(true));
+    const editSaved = document.getElementById('saved-edit');
+    if (editSaved) editSaved.addEventListener('click', async () => {
+        const rec = await getEntry(Number(editSaved.dataset.id));
+        if (rec) openEntryEditModal(rec); else flashMessage('Entry not found', true);
+    });
 
     // wire customize categories modal
     const customize = document.getElementById('customize-emotions');
@@ -1052,22 +1215,20 @@ function openEntryEditModal(rec) {
     keys.forEach(k => {
         const row = document.createElement('div');
         row.className = 'emotion';
-        const label = document.createElement('label');
-        label.setAttribute('for', 'edit_' + k);
+        row.classList.add('emotion--scale');
+        const label = document.createElement('span');
+        label.className = 'emotion__label';
+        label.id = 'lbl_edit_' + k;
         label.textContent = LABELS[k] || k;
-        const input = document.createElement('input');
-        input.type = 'number'; input.min = 1; input.max = 10;
-        input.inputMode = 'numeric';
-        input.id = 'edit_' + k; input.dataset.key = k;
-        if (vals[k] !== null && typeof vals[k] !== 'undefined') input.value = vals[k];
-        row.appendChild(label); row.appendChild(input);
+        row.appendChild(label);
+        row.appendChild(buildRatingScale(k, 'edit_' + k, label.id, vals[k]));
         fields.appendChild(row);
     });
 
     document.getElementById('entry-edit-time').value = toDateTimeLocal(rec.timestamp);
     document.getElementById('entry-edit-note').value = vals.note || '';
     modal.hidden = false; modal.setAttribute('aria-hidden', 'false');
-    const first = fields.querySelector('input');
+    const first = fields.querySelector('input[type="radio"]:checked') || fields.querySelector('input[type="radio"]') || document.getElementById('entry-edit-time');
     if (first) first.focus();
 }
 
