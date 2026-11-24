@@ -51,6 +51,7 @@ describe('Weather', () => {
         it('uses current conditions for an entry saved just now', () => {
             const req = app.buildWeatherRequest(40.71, -74.01, NOW - 5 * 60000, NOW);
             assert.equal(req.kind, 'current');
+            assert.equal(new URL(req.url).searchParams.get('temperature_unit'), 'fahrenheit');
             assert.match(req.url, /^https:\/\/api\.open-meteo\.com\/v1\/forecast\?latitude=40\.71&longitude=-74\.01&current=/);
         });
 
@@ -63,6 +64,7 @@ describe('Weather', () => {
             assert.equal(u.searchParams.get('start_date'), '2026-11-20');
             assert.equal(u.searchParams.get('end_date'), '2026-11-21'); // 00:40 GMT next day is within an hour
             assert.equal(u.searchParams.get('timezone'), 'GMT');
+            assert.equal(u.searchParams.get('temperature_unit'), 'fahrenheit');
         });
 
         it('picks the hour nearest the entry from an hourly response', () => {
@@ -98,22 +100,22 @@ describe('Weather', () => {
         });
 
         it('history line reads naturally in both unit systems', () => {
-            const e = withWx(NOW, { temp: 12, humidity: 61.6, pressure: 1013.25, precip: 0, code: 0 });
+            const e = withWx(NOW, { temp: 53.6, humidity: 61.6, pressure: 1013.25, precip: 0, code: 0 }); // stored °F
             assert.equal(app.weatherSummaryText(e, 'metric'), '☀️ Clear · 12°C · 62% · 1013 hPa');
             assert.equal(app.weatherSummaryText(e, 'us'), '☀️ Clear · 54°F · 62% · 29.92 inHg');
-            const wet = withWx(NOW, { temp: 12, precip: 2.54, code: 63 });
+            const wet = withWx(NOW, { temp: 53.6, precip: 2.54, code: 63 });
             assert.equal(app.weatherSummaryText(wet, 'us'), '🌧️ Rain · 54°F · 0.10 in rain');
         });
 
         it('chart series averages each day in the chosen units', () => {
             const s = app.computeDailyWeather([
-                withWx(at(2026, 11, 23, 9), { temp: 10 }),
-                withWx(at(2026, 11, 23, 13), { temp: 20 }),
-                withWx(at(2026, 11, 21, 9), { temp: 0 })
-            ], 'temp', 'us', 7, NOW);
+                withWx(at(2026, 11, 23, 9), { temp: 50 }),
+                withWx(at(2026, 11, 23, 13), { temp: 68 }),
+                withWx(at(2026, 11, 21, 9), { temp: 32 })
+            ], 'temp', 'metric', 7, NOW);
             assert.equal(s.length, 7);
-            assert.equal(s.at(-1).value, 59); // 15°C
-            assert.equal(s.at(-3).value, 32);
+            assert.equal(s.at(-1).value, 15); // avg 59°F shown as °C
+            assert.equal(s.at(-3).value, 0);
             assert.equal(s.at(-2).value, null);
         });
 
@@ -155,14 +157,14 @@ describe('Weather', () => {
             assert.equal((svg.match(/class="trend-wx-bar"/g) || []).length, 1);
         });
 
-        it('CSV gains metric weather columns when an entry has weather', () => {
+        it('CSV gains weather columns (temperature in °F) when an entry has weather', () => {
             const csv = app.buildCsv([
-                { id: 1, timestamp: Date.UTC(2026, 10, 23, 12), values: { energy: 5 }, weather: { status: 'ok', temp: 7.5, humidity: 64, pressure: 1016.2, precip: 0, code: 2 } },
+                { id: 1, timestamp: Date.UTC(2026, 10, 23, 12), values: { energy: 5 }, weather: { status: 'ok', temp: 45.5, humidity: 64, pressure: 1016.2, precip: 0, code: 2 } },
                 { id: 2, timestamp: Date.UTC(2026, 10, 23, 13), values: { energy: 6 } }
             ], ['energy']);
             const lines = csv.split('\r\n');
-            assert.equal(lines[0], 'timestamp,id,energy,weather,temp_c,humidity_pct,pressure_hpa,precip_mm');
-            assert.equal(lines[1], '2026-11-23T12:00:00.000Z,1,5,Partly cloudy,7.5,64,1016.2,0');
+            assert.equal(lines[0], 'timestamp,id,energy,weather,temp_f,humidity_pct,pressure_hpa,precip_mm');
+            assert.equal(lines[1], '2026-11-23T12:00:00.000Z,1,5,Partly cloudy,45.5,64,1016.2,0');
             assert.equal(lines[2], '2026-11-23T13:00:00.000Z,2,6,,,,,');
         });
     });
@@ -259,8 +261,9 @@ describe('Weather', () => {
 
     describe('I: inverse relationships', () => {
         it('US units convert back to the stored metric values', () => {
-            const e = withWx(NOW, { temp: 21.3, pressure: 1009.4, precip: 3.2, humidity: 40 });
-            assert.ok(Math.abs((app.weatherMetricValue(e, 'temp', 'us') - 32) * 5 / 9 - 21.3) < 1e-9);
+            const e = withWx(NOW, { temp: 70.3, pressure: 1009.4, precip: 3.2, humidity: 40 });
+            assert.equal(app.weatherMetricValue(e, 'temp', 'us'), 70.3); // stored °F shown as is
+            assert.ok(Math.abs(app.weatherMetricValue(e, 'temp', 'metric') * 9 / 5 + 32 - 70.3) < 1e-9);
             assert.ok(Math.abs(app.weatherMetricValue(e, 'pressure', 'us') / 0.02953 - 1009.4) < 1e-9);
             assert.ok(Math.abs(app.weatherMetricValue(e, 'precip', 'us') * 25.4 - 3.2) < 1e-9);
             assert.equal(app.weatherMetricValue(e, 'humidity', 'us'), 40);
@@ -280,7 +283,7 @@ describe('Weather', () => {
         it('the chart series for one reading per day matches the readings themselves', () => {
             const temps = [3, 8, -2, 11, 0, 6, 9];
             const entries = temps.map((t, i) => withWx(at(2026, 11, 17 + i, 10), { temp: t }));
-            assert.deepEqual(plain(app.computeDailyWeather(entries, 'temp', 'metric', 7, NOW).map(p => p.value)), temps);
+            assert.deepEqual(plain(app.computeDailyWeather(entries, 'temp', 'us', 7, NOW).map(p => p.value)), temps);
         });
 
         it('every axis covers its data with round, evenly spaced ticks', () => {

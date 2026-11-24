@@ -413,8 +413,8 @@ function csvEscape(cell) {
     return s;
 }
 
-// Weather columns, added to CSV exports only when some entry has weather (always metric)
-const CSV_WEATHER_COLUMNS = ['weather', 'temp_c', 'humidity_pct', 'pressure_hpa', 'precip_mm'];
+// Weather columns, added to CSV exports only when some entry has weather (stored units: °F, %, hPa, mm)
+const CSV_WEATHER_COLUMNS = ['weather', 'temp_f', 'humidity_pct', 'pressure_hpa', 'precip_mm'];
 
 // Build a CSV document (CRLF line endings) for the given entries and emotion columns
 function buildCsv(entries, keys) {
@@ -1402,12 +1402,13 @@ async function saveEntryEditModal() {
 // An entry can carry a `weather` object:
 //   { status: 'pending' | 'ok' | 'unavailable', lat, lon, source: 'gps' | 'city',
 //     temp, humidity, pressure, precip, code, attempts }
-// Values are stored metric (°C, %, hPa at sea level, mm in that hour) and converted for display.
+// Temperature is stored in °F; the rest metric (%, hPa at sea level, mm in that hour). Converted for display.
 // Weather comes from Open-Meteo (open-meteo.com), which needs no key or account.
 // An entry saved offline stays 'pending' and is filled in from hourly history once online.
 
 const LS_WEATHER = 'll_weather_v1';
 const WX_FIELDS = 'temperature_2m,relative_humidity_2m,pressure_msl,precipitation,weather_code';
+const WX_TEMP_UNIT = 'temperature_unit=fahrenheit'; // Open-Meteo returns °F, which is what we store
 const WX_CURRENT_WINDOW_MS = 30 * 60 * 1000;  // this close to now, use current conditions
 const WX_FORECAST_MAX_AGE_DAYS = 85;          // older than this, use the historical archive
 const WX_MAX_ATTEMPTS = 5;                    // then give up on that entry
@@ -1489,14 +1490,14 @@ function buildWeatherRequest(lat, lon, ts, now) {
     if (ts > n + WX_CURRENT_WINDOW_MS) return null; // not happened yet
     const loc = `latitude=${lat}&longitude=${lon}`;
     if (Math.abs(n - ts) <= WX_CURRENT_WINDOW_MS) {
-        const url = `https://api.open-meteo.com/v1/forecast?${loc}&current=${WX_FIELDS}&timezone=GMT`;
+        const url = `https://api.open-meteo.com/v1/forecast?${loc}&current=${WX_FIELDS}&${WX_TEMP_UNIT}&timezone=GMT`;
         return { kind: 'current', url, key: url };
     }
     const host = (n - ts) / 86400000 > WX_FORECAST_MAX_AGE_DAYS
         ? 'https://archive-api.open-meteo.com/v1/archive'
         : 'https://api.open-meteo.com/v1/forecast';
     // a day either side of the nearest hour, in GMT
-    const url = `${host}?${loc}&hourly=${WX_FIELDS}&start_date=${utcDay(ts - 3600000)}&end_date=${utcDay(ts + 3600000)}&timezone=GMT`;
+    const url = `${host}?${loc}&hourly=${WX_FIELDS}&${WX_TEMP_UNIT}&start_date=${utcDay(ts - 3600000)}&end_date=${utcDay(ts + 3600000)}&timezone=GMT`;
     return { kind: 'hourly', url, key: url };
 }
 
@@ -1555,8 +1556,8 @@ function weatherMetricValue(entry, metric, units) {
     if (!w || w.status !== 'ok' || !WX_METRICS.includes(metric)) return null;
     const v = numOrNull(w[metric]);
     if (v === null) return null;
+    if (metric === 'temp') return units === 'us' ? v : (v - 32) * 5 / 9; // stored in °F
     if (units !== 'us') return v;
-    if (metric === 'temp') return v * 9 / 5 + 32;
     if (metric === 'pressure') return v * 0.02953;
     if (metric === 'precip') return v / 25.4;
     return v;
