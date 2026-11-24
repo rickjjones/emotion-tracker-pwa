@@ -16,7 +16,7 @@ describe('Clear All confirmation text', () => {
         it('says it cannot be undone and points to a backup', () => {
             const text = app.clearAllConfirmText(5);
             assert.match(text, /cannot be undone/);
-            assert.match(text, /Export JSON/);
+            assert.match(text, /Export your entries first/);
         });
     });
 

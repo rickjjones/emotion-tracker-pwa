@@ -16,86 +16,125 @@
             <button id="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode">🌙</button>
         </div>
 
-        <!-- Categories editor modal -->
+        <!-- Bottom bar on phones, under the header on wider screens -->
+        <nav class="tabs" role="tablist" aria-label="Sections">
+            <button type="button" role="tab" id="tab-log" data-view="log" aria-controls="view-log" aria-selected="true"><span class="tabs__icon" aria-hidden="true">✎</span>Log</button>
+            <button type="button" role="tab" id="tab-history" data-view="history" aria-controls="view-history" aria-selected="false" tabindex="-1"><span class="tabs__icon" aria-hidden="true">☰</span>History</button>
+            <button type="button" role="tab" id="tab-settings" data-view="settings" aria-controls="view-settings" aria-selected="false" tabindex="-1"><span class="tabs__icon" aria-hidden="true">⚙</span>Settings</button>
+        </nav>
+
+        <!-- Log: the daily path -->
+        <section id="view-log" class="view" role="tabpanel" aria-labelledby="tab-log">
+            <!-- The form is rendered dynamically by app.js based on selected categories/emotions -->
+            <form id="emotion-form"></form>
+
+            <!-- Shown in place of the form right after a save -->
+            <div id="saved-summary" class="saved-summary" hidden>
+                <p id="saved-summary-text" class="saved-summary__text"></p>
+                <div class="saved-summary__actions">
+                    <button id="saved-edit" type="button" class="btn-secondary">Edit this entry</button>
+                    <button id="saved-log-another" type="button">Log another</button>
+                </div>
+            </div>
+        </section>
+
+        <!-- History: trends on top, entries grouped by day below -->
+        <section id="view-history" class="view" role="tabpanel" aria-labelledby="tab-history" hidden>
+            <section id="trends" class="trends" aria-labelledby="trends-title">
+                <div class="trends__header">
+                    <h2 id="trends-title">Trends</h2>
+                    <label class="trends__select-label" for="trends-emotion">Emotion</label>
+                    <select id="trends-emotion"></select>
+                    <div id="trends-range" class="trends__range" role="group" aria-label="Time range">
+                        <button type="button" data-days="7">7 days</button>
+                        <button type="button" data-days="30">30 days</button>
+                        <button type="button" data-days="90">90 days</button>
+                    </div>
+                </div>
+                <div id="trends-chart" class="trends__chart"></div>
+                <p id="trends-summary" class="trends__summary"></p>
+            </section>
+
+            <h2 class="view__title">Entries</h2>
+            <div id="emotion-display"></div>
+        </section>
+
+        <!-- Settings: everything that isn't daily -->
+        <section id="view-settings" class="view" role="tabpanel" aria-labelledby="tab-settings" hidden>
+            <div class="card">
+                <h2>Emotions</h2>
+                <p class="helper-text">Choose which emotions appear on the form, rename them, or add your own.</p>
+                <button id="manage-emotions" type="button">Manage emotions</button>
+            </div>
+
+            <div class="card">
+                <h2>Your data</h2>
+                <p class="helper-text">Entries are stored only on this device. Export a copy to keep a backup or to open it in a spreadsheet.</p>
+                <div class="card__actions">
+                    <button id="open-export" type="button">Export…</button>
+                    <button id="import-json" type="button" class="btn-secondary">Import JSON</button>
+                    <input type="file" id="import-file" accept="application/json" style="display:none">
+                </div>
+                <p class="helper-text">Exported entries are marked <strong>Exported</strong> in history.
+                    <button id="undo-last-export" type="button" class="link-btn">Mark last export as not exported</button></p>
+            </div>
+
+            <div class="card card--danger">
+                <h2>Danger zone</h2>
+                <p class="helper-text">Permanently delete every entry on this device.</p>
+                <button id="clear-all" type="button" class="btn-danger">Clear All Entries</button>
+            </div>
+        </section>
+
+        <!-- Manage emotions dialog -->
         <div id="categories-edit-modal" class="modal" hidden aria-hidden="true">
             <div class="modal__backdrop" id="categories-edit-backdrop"></div>
-            <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="categories-edit-title">
-                <h2 id="categories-edit-title">Edit categories and emotions</h2>
-                <div id="categories-edit-list"></div>
-                <div style="display:flex;gap:8px;margin-top:8px;">
-                    <button id="add-category" type="button">Add Category</button>
-                    <button id="reset-categories" type="button">Reset to defaults</button>
-                    <button id="export-categories" type="button">Export config</button>
-                    <button id="import-categories" type="button">Import config</button>
-                    <input type="file" id="import-categories-file" accept="application/json" style="display:none">
+            <div class="modal__panel modal__panel--sheet" role="dialog" aria-modal="true" aria-labelledby="categories-edit-title" aria-describedby="categories-edit-help">
+                <div class="modal__body">
+                    <h2 id="categories-edit-title">Manage emotions</h2>
+                    <p id="categories-edit-help" class="helper-text">Tick the emotions to show on the form. Edit a name to rename it; past entries keep their ratings.</p>
+                    <div id="categories-edit-list"></div>
+                    <button id="add-category" type="button" class="btn-secondary">+ Add category</button>
+                    <details class="more-options">
+                        <summary>More options</summary>
+                        <label class="check-row"><input type="checkbox" id="show-keys"> Show internal keys</label>
+                        <div class="card__actions">
+                            <button id="reset-categories" type="button" class="btn-secondary">Reset to defaults</button>
+                            <button id="export-categories" type="button" class="btn-secondary">Export config</button>
+                            <button id="import-categories" type="button" class="btn-secondary">Import config</button>
+                        </div>
+                        <input type="file" id="import-categories-file" accept="application/json" style="display:none">
+                    </details>
                 </div>
-                <div style="margin-top:12px;text-align:right;">
-                    <button id="categories-edit-cancel" type="button">Cancel</button>
+                <div class="modal__footer">
+                    <button id="categories-edit-cancel" type="button" class="btn-secondary">Cancel</button>
                     <button id="categories-edit-save" type="button">Save</button>
                 </div>
             </div>
         </div>
-        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:8px;">
-            <button id="customize-emotions" type="button" title="Choose which emotions appear on the form">Customize Emotions</button>
-            <button id="edit-categories" type="button" title="Rename, add or remove categories and emotions">Edit Categories</button>
-        </div>
 
-        <!-- The form is rendered dynamically by app.js based on selected categories/emotions -->
-        <form id="emotion-form"></form>
-
-        <!-- Shown in place of the form right after a save -->
-        <div id="saved-summary" class="saved-summary" hidden>
-            <p id="saved-summary-text" class="saved-summary__text"></p>
-            <div class="saved-summary__actions">
-                <button id="saved-edit" type="button" class="btn-secondary">Edit this entry</button>
-                <button id="saved-log-another" type="button">Log another</button>
-            </div>
-        </div>
-
-        <!-- Categories / emotion selection modal -->
-        <div id="categories-modal" class="modal" hidden aria-hidden="true">
-            <div class="modal__backdrop" id="categories-backdrop"></div>
-            <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="categories-title">
-                <h2 id="categories-title">Choose emotions to track</h2>
-                <div id="categories-list"></div>
-                <div style="margin-top:12px;text-align:right;">
-                    <button id="categories-cancel" type="button">Cancel</button>
-                    <button id="categories-save" type="button">Save</button>
+        <!-- Export sheet -->
+        <div id="export-modal" class="modal" hidden aria-hidden="true">
+            <div class="modal__backdrop" id="export-backdrop"></div>
+            <form id="export-form" class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="export-title">
+                <h2 id="export-title">Export entries</h2>
+                <fieldset class="choice">
+                    <legend>Format</legend>
+                    <label class="check-row"><input type="radio" name="export-format" value="csv" checked> CSV <span class="helper-text">for spreadsheets</span></label>
+                    <label class="check-row"><input type="radio" name="export-format" value="json"> JSON <span class="helper-text">full backup you can import again</span></label>
+                </fieldset>
+                <fieldset class="choice">
+                    <legend>Which entries</legend>
+                    <label class="check-row"><input type="radio" name="export-scope" value="all" checked> All entries <span id="export-count-all" class="helper-text"></span></label>
+                    <label class="check-row"><input type="radio" name="export-scope" value="new"> Only new since last export <span id="export-count-new" class="helper-text"></span></label>
+                    <p class="helper-text">Exporting only new entries marks them as exported, so next time you get just what's changed.</p>
+                </fieldset>
+                <div class="modal__footer">
+                    <button id="export-cancel" type="button" class="btn-secondary">Cancel</button>
+                    <button type="submit">Download</button>
                 </div>
-            </div>
+            </form>
         </div>
-
-        <div class="controls">
-            <button id="view-history" type="button" aria-expanded="false" aria-controls="emotion-display">View History</button>
-            <button id="view-trends" type="button" aria-expanded="false" aria-controls="trends">View Trends</button>
-            <button id="export-json" type="button">Export JSON</button>
-            <button id="export-csv" type="button">Export CSV</button>
-            <button id="export-unsynced" type="button">Export Unsynced</button>
-            <button id="undo-last-export" type="button">Undo Last Export</button>
-            <button id="import-json" type="button">Import JSON</button>
-            <input type="file" id="import-file" accept="application/json" style="display:none">
-            <div class="controls__danger">
-                <button id="clear-all" type="button">Clear All Entries</button>
-            </div>
-        </div>
-        <p class="helper-text" style="text-align:center;margin:8px 0 0;">Entries you have exported are marked <strong>Exported</strong> in history.</p>
-
-        <section id="trends" class="trends" hidden aria-labelledby="trends-title">
-            <div class="trends__header">
-                <h2 id="trends-title">Trends</h2>
-                <label class="trends__select-label" for="trends-emotion">Emotion</label>
-                <select id="trends-emotion"></select>
-                <div id="trends-range" class="trends__range" role="group" aria-label="Time range">
-                    <button type="button" data-days="7">7 days</button>
-                    <button type="button" data-days="30">30 days</button>
-                    <button type="button" data-days="90">90 days</button>
-                </div>
-            </div>
-            <div id="trends-chart" class="trends__chart"></div>
-            <p id="trends-summary" class="trends__summary"></p>
-        </section>
-
-        <div id="emotion-display"></div>
 
         <!-- Edit a single entry -->
         <div id="entry-edit-modal" class="modal" hidden aria-hidden="true">
@@ -111,8 +150,8 @@
                     <label for="entry-edit-note">Note</label>
                     <textarea id="entry-edit-note" class="note-field" rows="3"></textarea>
                 </div>
-                <div style="margin-top:12px;text-align:right;">
-                    <button id="entry-edit-cancel" type="button">Cancel</button>
+                <div class="modal__footer">
+                    <button id="entry-edit-cancel" type="button" class="btn-secondary">Cancel</button>
                     <button type="submit">Save changes</button>
                 </div>
             </form>
