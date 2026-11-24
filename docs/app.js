@@ -47,7 +47,7 @@ function clearAllConfirmText(count) {
     const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
     if (n === 0) return 'There are no entries to delete.';
     const what = n === 1 ? 'your 1 entry' : `all ${n} entries`;
-    return `Delete ${what}? This cannot be undone. Use Export JSON first if you want a backup.`;
+    return `Delete ${what}? This cannot be undone. Export your entries first if you want a backup.`;
 }
 
 // ----- Rating scale, draft autosave, post-save summary -----
@@ -442,78 +442,100 @@ function slugify(str) {
     return String(str || '').toLowerCase().trim().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 }
 
-function makeEmotionRow(key, label) {
+// One emotion in the Manage emotions dialog: show-on-form switch, label, optional key, remove.
+function makeEmotionRow(key, label, visible) {
     const row = document.createElement('div');
     row.className = 'cat-edit__emotion';
-    row.style.display = 'flex';
-    row.style.gap = '8px';
-    const keyInput = document.createElement('input');
-    keyInput.className = 'cat-edit__key';
-    keyInput.value = key || '';
-    keyInput.placeholder = 'key (internal id)';
-    keyInput.setAttribute('aria-label', 'Emotion key');
+    row.dataset.origKey = key || '';
+    const show = document.createElement('input');
+    show.type = 'checkbox';
+    show.className = 'cat-edit__show';
+    show.checked = visible !== false;
     const labelInput = document.createElement('input');
+    labelInput.type = 'text';
     labelInput.className = 'cat-edit__label';
     labelInput.value = label || '';
-    labelInput.placeholder = 'label';
-    labelInput.setAttribute('aria-label', 'Emotion label');
+    labelInput.placeholder = 'Emotion name';
+    const keyInput = document.createElement('input');
+    keyInput.type = 'text';
+    keyInput.className = 'cat-edit__key';
+    keyInput.value = key || '';
+    keyInput.placeholder = 'key (auto)';
+    keyInput.setAttribute('aria-label', 'Internal key');
     const rm = document.createElement('button');
-    rm.type = 'button'; rm.textContent = 'Remove';
-    rm.addEventListener('click', () => row.remove());
-    row.appendChild(keyInput); row.appendChild(labelInput); row.appendChild(rm);
+    rm.type = 'button';
+    rm.className = 'icon-btn cat-edit__remove';
+    rm.textContent = '✕';
+    const name = () => labelInput.value.trim() || 'this emotion';
+    const syncNames = () => {
+        show.setAttribute('aria-label', `Show ${name()} on the form`);
+        labelInput.setAttribute('aria-label', 'Emotion name');
+        rm.setAttribute('aria-label', `Remove ${name()}`);
+        rm.title = `Remove ${name()}`;
+    };
+    syncNames();
+    labelInput.addEventListener('input', syncNames);
+    rm.addEventListener('click', () => {
+        const next = row.nextElementSibling || row.previousElementSibling;
+        row.remove();
+        const target = next && next.querySelector('.cat-edit__label');
+        if (target) target.focus();
+    });
+    row.appendChild(show); row.appendChild(labelInput); row.appendChild(keyInput); row.appendChild(rm);
     return row;
 }
 
 // catId is the stable id of an existing category, or '' for a new one.
-function makeCategoryPanel(catId, cat, labels) {
+// catId is the stable id of an existing category, or '' for a new one.
+function makeCategoryPanel(catId, cat, labels, tracked) {
     labels = labels || LABELS;
-    const panel = document.createElement('div');
+    const panel = document.createElement('fieldset');
     panel.className = 'cat-edit';
     panel.dataset.catId = catId || '';
-    panel.style.border = '1px solid rgba(0,0,0,0.06)';
-    panel.style.padding = '8px';
-    panel.style.margin = '8px 0';
 
     const titleRow = document.createElement('div');
-    titleRow.style.display = 'flex';
-    titleRow.style.gap = '8px';
+    titleRow.className = 'cat-edit__head';
     const titleInput = document.createElement('input');
+    titleInput.type = 'text';
     titleInput.className = 'cat-edit__title';
     titleInput.value = cat ? (cat.title || catId) : '';
-    titleInput.placeholder = 'Category title';
-    titleInput.setAttribute('aria-label', 'Category title');
+    titleInput.placeholder = 'Category name';
+    titleInput.setAttribute('aria-label', 'Category name');
     titleRow.appendChild(titleInput);
 
     const removeCatBtn = document.createElement('button');
     removeCatBtn.textContent = 'Remove category';
     removeCatBtn.type = 'button';
+    removeCatBtn.className = 'btn-small btn-danger';
     removeCatBtn.addEventListener('click', () => { panel.remove(); });
     titleRow.appendChild(removeCatBtn);
     panel.appendChild(titleRow);
 
     const keysContainer = document.createElement('div');
     keysContainer.className = 'cat-edit__emotions';
-    ((cat && cat.keys) || []).forEach(k => keysContainer.appendChild(makeEmotionRow(k, labels[k] || k)));
+    ((cat && cat.keys) || []).forEach(k => keysContainer.appendChild(makeEmotionRow(k, labels[k] || k, !tracked || tracked.has(k))));
     panel.appendChild(keysContainer);
 
     const addKeyBtn = document.createElement('button');
     addKeyBtn.type = 'button';
-    addKeyBtn.textContent = 'Add emotion';
+    addKeyBtn.className = 'btn-small btn-secondary';
+    addKeyBtn.textContent = '+ Add emotion';
     addKeyBtn.addEventListener('click', () => {
-        const row = makeEmotionRow('', '');
+        const row = makeEmotionRow('', '', true);
         keysContainer.appendChild(row);
-        row.querySelector('input').focus();
+        row.querySelector('.cat-edit__label').focus();
     });
     panel.appendChild(addKeyBtn);
     return panel;
 }
 
-function renderCategoriesEditor(cats, labels) {
+function renderCategoriesEditor(cats, labels, tracked) {
     const list = document.getElementById('categories-edit-list');
     if (!list) return;
     list.innerHTML = '';
+    const shown = tracked || new Set(getTrackedKeys());
     Object.entries(cats || loadEffectiveCategories()).forEach(([catId, cat]) => {
-        list.appendChild(makeCategoryPanel(catId, cat, labels));
+        list.appendChild(makeCategoryPanel(catId, cat, labels, shown));
     });
 }
 
@@ -521,11 +543,11 @@ function openCategoriesEditModal() {
     const modal = document.getElementById('categories-edit-modal');
     if (!modal) return;
     renderCategoriesEditor();
-    modal.hidden = false; modal.setAttribute('aria-hidden','false');
+    openModal(modal);
 }
 
 function closeCategoriesEditModal() {
-    const modal = document.getElementById('categories-edit-modal'); if (!modal) return; modal.hidden = true; modal.setAttribute('aria-hidden','true');
+    closeModal(document.getElementById('categories-edit-modal'));
 }
 
 function uniqueCategoryId(base, taken) {
@@ -536,51 +558,73 @@ function uniqueCategoryId(base, taken) {
     return id + '_' + n;
 }
 
-function saveCategoriesEditModal() {
-    const list = document.getElementById('categories-edit-list'); if (!list) return;
-    const panels = Array.from(list.querySelectorAll('.cat-edit'));
+// Turn the Manage emotions dialog's contents into a saved config.
+// `panels` = [{ catId, title, rows: [{ key, origKey, label, visible }] }]. Pure, so it is unit tested.
+// Returns { error } or { categories, labels, tracked, renamed }.
+function buildEmotionConfig(panels, defaultLabels) {
+    defaultLabels = defaultLabels || {};
     const categories = {};
     const labels = {};
-    // existing panels keep their ids; reserve them before naming new panels
-    const taken = new Set(panels.map(p => p.dataset.catId).filter(Boolean));
-
-    for (const panel of panels) {
-        const title = (panel.querySelector('.cat-edit__title').value || '').trim();
+    const tracked = [];
+    const renamed = [];
+    const list = Array.isArray(panels) ? panels : [];
+    // existing categories keep their ids; reserve them before naming new ones
+    const taken = new Set(list.map(p => p && p.catId).filter(Boolean));
+    for (const panel of list) {
+        if (!panel) continue;
+        const title = String(panel.title || '').trim();
         const keys = [];
-        panel.querySelectorAll('.cat-edit__emotion').forEach(row => {
-            const label = (row.querySelector('.cat-edit__label').value || '').trim();
-            const key = slugify(row.querySelector('.cat-edit__key').value) || slugify(label);
+        (panel.rows || []).forEach(row => {
+            const label = String(row.label || '').trim();
+            const key = slugify(row.key) || slugify(label);
             if (!key) return;
             keys.push(key);
-            if (label && label !== DEFAULT_LABELS[key]) labels[key] = label;
-            else if (!label && !DEFAULT_LABELS[key]) labels[key] = key;
+            if (row.visible !== false) tracked.push(key);
+            if (row.origKey && row.origKey !== key) renamed.push(row.origKey);
+            if (label && label !== defaultLabels[key]) labels[key] = label;
+            else if (!label && !defaultLabels[key]) labels[key] = key;
         });
         if (!keys.length) continue; // empty categories are dropped
-        let id = panel.dataset.catId;
+        let id = panel.catId;
         if (!id) { id = uniqueCategoryId(slugify(title), taken); taken.add(id); }
         categories[id] = { title: title || id, keys };
     }
+    const allKeys = Object.values(categories).reduce((acc, c) => acc.concat(c.keys), []);
+    if (!allKeys.length) return { error: 'Add at least one emotion' };
+    if (allKeys.includes('note')) return { error: '"note" is reserved' };
+    const dup = allKeys.filter((v, i, a) => a.indexOf(v) !== i);
+    if (dup.length) return { error: 'Two emotions share the name or key: ' + Array.from(new Set(dup)).join(', ') };
+    if (!tracked.length) return { error: 'Choose at least one emotion to show on the form' };
+    return { categories, labels, tracked, renamed };
+}
 
-    if (!Object.keys(categories).length) { flashMessage('Add at least one emotion', true); return; }
-    const allKeys = Object.values(categories).reduce((acc,c) => acc.concat(c.keys), []);
-    if (allKeys.includes('note')) { flashMessage('"note" is reserved', true); return; }
-    const dup = allKeys.filter((v,i,a) => a.indexOf(v) !== i);
-    if (dup.length) { flashMessage('Duplicate keys found: ' + Array.from(new Set(dup)).join(', '), true); return; }
+function readEmotionEditor() {
+    const list = document.getElementById('categories-edit-list');
+    if (!list) return [];
+    return Array.from(list.querySelectorAll('.cat-edit')).map(panel => ({
+        catId: panel.dataset.catId,
+        title: panel.querySelector('.cat-edit__title').value,
+        rows: Array.from(panel.querySelectorAll('.cat-edit__emotion')).map(row => ({
+            key: row.querySelector('.cat-edit__key').value,
+            origKey: row.dataset.origKey,
+            label: row.querySelector('.cat-edit__label').value,
+            visible: row.querySelector('.cat-edit__show').checked
+        }))
+    }));
+}
 
-    // warn if keys were added or renamed (existing entries are stored by key)
-    const prevKeys = getAllEmotionKeys();
-    const added = allKeys.filter(k => !prevKeys.includes(k));
-    if (added.length) {
-        if (!confirm('You added or renamed keys. Existing stored entries may not map to the new keys. Continue?')) return;
+function saveCategoriesEditModal() {
+    const result = buildEmotionConfig(readEmotionEditor(), DEFAULT_LABELS);
+    if (result.error) { flashMessage(result.error, true); return; }
+    // past entries are stored by key, so changing a key detaches its history
+    if (result.renamed.length) {
+        if (!confirm('You changed the internal key of ' + result.renamed.join(', ') + '. Past entries recorded under the old key will not show under the new one. Continue?')) return;
     }
-
-    const prevTracked = hasSavedTracked() ? getTrackedKeys() : null;
-    if (!setSavedCategories({ version: 2, categories, labels })) { flashMessage('Could not save categories', true); return; }
-    // newly added emotions should show up on the form, not be hidden by an old tracked list
-    if (prevTracked) setTrackedKeys(Array.from(new Set(prevTracked.concat(added))).filter(k => allKeys.includes(k)));
+    if (!setSavedCategories({ version: 2, categories: result.categories, labels: result.labels })) { flashMessage('Could not save emotions', true); return; }
+    setTrackedKeys(result.tracked);
     closeCategoriesEditModal();
     renderEmotionForm();
-    flashMessage('Categories saved');
+    flashMessage('Emotions saved');
 }
 
 function exportCategoriesConfig() {
@@ -596,78 +640,109 @@ async function importCategoriesConfigFile(file) {
         const data = normalizeCategoriesConfig(JSON.parse(text));
         if (!data) { flashMessage('Invalid config file', true); return; }
         setSavedCategories(data);
+        // imported emotions all start visible
+        setTrackedKeys(getAllEmotionKeys().filter(k => k !== 'note'));
         renderCategoriesEditor();
         renderEmotionForm();
         flashMessage('Imported categories');
     } catch (e) { flashMessage('Import failed', true); }
 }
 
-// Keyboard handling for modals (Escape to close) and basic focus trap
+// ----- Dialog helpers: focus moves in on open and returns to the opener on close -----
+const modalOpeners = new Map();
+
+function openModal(modal) {
+    if (!modal) return;
+    modalOpeners.set(modal.id, document.activeElement);
+    modal.hidden = false;
+    modal.setAttribute('aria-hidden', 'false');
+    const first = modal.querySelector('.modal__panel input:not([type="hidden"]), .modal__panel button, .modal__panel select, .modal__panel textarea');
+    if (first) first.focus();
+}
+
+function closeModal(modal) {
+    if (!modal || modal.hidden) return;
+    modal.hidden = true;
+    modal.setAttribute('aria-hidden', 'true');
+    const opener = modalOpeners.get(modal.id);
+    modalOpeners.delete(modal.id);
+    if (opener && typeof opener.focus === 'function' && document.body.contains(opener)) opener.focus();
+}
+
+// Escape closes the top dialog; Tab stays inside an open dialog.
 document.addEventListener('keydown', (ev) => {
+    const open = ['entry-edit-modal', 'export-modal', 'categories-edit-modal']
+        .map(id => document.getElementById(id)).find(m => m && !m.hidden);
+    if (!open) return;
     if (ev.key === 'Escape') {
-        const mod1 = document.getElementById('categories-modal');
-        const mod2 = document.getElementById('categories-edit-modal');
-        const mod3 = document.getElementById('entry-edit-modal');
-        if (mod3 && !mod3.hidden) { closeEntryEditModal(); }
-        else if (mod2 && !mod2.hidden) { closeCategoriesEditModal(); }
-        else if (mod1 && !mod1.hidden) { closeCategoriesModal(); }
+        if (open.id === 'entry-edit-modal') closeEntryEditModal();
+        else if (open.id === 'export-modal') closeModal(open);
+        else closeCategoriesEditModal();
+        return;
+    }
+    if (ev.key === 'Tab') {
+        const items = Array.from(open.querySelectorAll('.modal__panel input:not([type="hidden"]), .modal__panel button, .modal__panel select, .modal__panel textarea, .modal__panel summary'))
+            .filter(el => !el.disabled && el.offsetParent !== null);
+        if (!items.length) return;
+        const first = items[0], last = items[items.length - 1];
+        if (ev.shiftKey && document.activeElement === first) { ev.preventDefault(); last.focus(); }
+        else if (!ev.shiftKey && document.activeElement === last) { ev.preventDefault(); first.focus(); }
     }
 });
 
-// Export all entries to CSV with stable headers
-async function exportEntriesToCsv() {
-    const entries = await getAllEntries();
-    if (!entries || entries.length === 0) {
-        flashMessage('No entries to export', true);
-        return;
-    }
-
-    const csv = buildCsv(entries, getEmotionCsvKeys());
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `emotion-entries-${new Date().toISOString()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
-}
-
 // Export unsynced entries to CSV and mark them as exported
-async function exportUnsyncedToCsv() {
-    const unsynced = await getUnsyncedEntries();
-    if (!unsynced || unsynced.length === 0) {
-        flashMessage('No unsynced entries to export', true);
-        return;
-    }
-    const csv = buildCsv(unsynced, getEmotionCsvKeys());
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `emotion-unsynced-${new Date().toISOString()}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+// ----- Export -----
 
-    const ids = unsynced.map(e => e.id).filter(Boolean);
-    await markEntriesExported(ids);
-    flashMessage(`Exported ${ids.length} entries`);
+// 'all' = every entry; 'new' = entries not yet exported. Pure, so it is unit tested.
+function selectEntriesForExport(entries, scope) {
+    const list = Array.isArray(entries) ? entries : [];
+    return scope === 'new' ? list.filter(e => e && !e.exported) : list.slice();
 }
 
-async function exportEntriesToJson() {
-    const entries = await getAllEntries();
-    const blob = new Blob([JSON.stringify(entries, null, 2)], { type: 'application/json' });
+// e.g. lifelens-new-2026-11-23.csv
+function exportFileName(format, scope, date) {
+    const d = date instanceof Date && !isNaN(date) ? date : new Date();
+    const ext = format === 'json' ? 'json' : 'csv';
+    return `lifelens-${scope === 'new' ? 'new' : 'all'}-${dayKey(d.getTime())}.${ext}`;
+}
+
+function downloadText(name, text, type) {
+    const blob = new Blob([text], { type });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `emotion-entries-${new Date().toISOString()}.json`;
+    a.download = name;
     document.body.appendChild(a);
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+}
+
+// Download entries in the chosen format. Exporting only new entries marks them as exported.
+async function runExport(format, scope) {
+    const entries = selectEntriesForExport(await getAllEntries(), scope);
+    if (!entries.length) {
+        flashMessage(scope === 'new' ? 'No new entries since your last export' : 'No entries to export', true);
+        return false;
+    }
+    const sorted = entries.slice().sort((a, b) => a.timestamp - b.timestamp);
+    if (format === 'json') downloadText(exportFileName('json', scope), JSON.stringify(sorted, null, 2), 'application/json');
+    else downloadText(exportFileName('csv', scope), buildCsv(sorted, getEmotionCsvKeys()), 'text/csv;charset=utf-8;');
+    if (scope === 'new') {
+        await markEntriesExported(sorted.map(e => e.id).filter(Boolean));
+        await refreshViews();
+    }
+    flashMessage(`Exported ${sorted.length} ${sorted.length === 1 ? 'entry' : 'entries'}`);
+    return true;
+}
+
+async function openExportModal() {
+    const modal = document.getElementById('export-modal');
+    if (!modal) return;
+    const entries = await getAllEntries();
+    document.getElementById('export-count-all').textContent = `(${entries.length})`;
+    document.getElementById('export-count-new').textContent = `(${selectEntriesForExport(entries, 'new').length})`;
+    openModal(modal);
 }
 
 function formToValues() {
@@ -696,27 +771,73 @@ function formToValues() {
     return values;
 }
 
+// Ratings that were actually given, in category order. Pure, so it is unit tested.
+function ratedPairs(values) {
+    const vals = values || {};
+    const order = getOrderedEmotionKeys([{ values: vals }]);
+    return order.filter(k => typeof vals[k] === 'number' && Number.isFinite(vals[k])).map(k => [k, vals[k]]);
+}
+
+// "Today", "Yesterday", or e.g. "Mon, Nov 17" (with the year when it isn't this year).
+function dayHeading(ts, now) {
+    const n = new Date(typeof now === 'number' ? now : Date.now());
+    const d = new Date(ts);
+    const startOf = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((startOf(n) - startOf(d)) / 86400000);
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Yesterday';
+    const opts = { weekday: 'short', month: 'short', day: 'numeric' };
+    if (d.getFullYear() !== n.getFullYear()) opts.year = 'numeric';
+    return d.toLocaleDateString(undefined, opts);
+}
+
+// Newest first, grouped by local calendar day: [{ key, heading, entries }]
+function groupEntriesByDay(entries, now) {
+    const sorted = (Array.isArray(entries) ? entries : []).filter(e => e && Number.isFinite(e.timestamp))
+        .sort((a, b) => b.timestamp - a.timestamp);
+    const groups = [];
+    sorted.forEach(e => {
+        const key = dayKey(e.timestamp);
+        let g = groups[groups.length - 1];
+        if (!g || g.key !== key) { g = { key, heading: dayHeading(e.timestamp, now), entries: [] }; groups.push(g); }
+        g.entries.push(e);
+    });
+    return groups;
+}
+
+const HISTORY_PAGE = 30;
+let historyLimit = HISTORY_PAGE;
+
 function renderEntriesList(entries) {
     const container = document.getElementById('emotion-display');
     if (!container) return;
     if (!entries || entries.length === 0) {
-        container.innerHTML = '<p>No entries yet.</p>';
+        container.innerHTML = '<div class="empty-state"><p>No entries yet.</p><button type="button" data-action="go-log">Log how you feel</button></div>';
         return;
     }
-    const sorted = entries.slice().sort((a,b) => b.timestamp - a.timestamp);
-    const html = sorted.map(e => {
-        const date = new Date(e.timestamp);
-        const pairs = Object.entries(e.values || {});
-        const items = pairs.filter(([k]) => k !== 'note').map(([k,v]) => {
-            const label = LABELS[k] || k;
-            return `<li><strong>${escapeHtml(label)}:</strong> ${v === null ? '—' : escapeHtml(String(v))}</li>`;
+    const shown = entries.slice().sort((a, b) => b.timestamp - a.timestamp).slice(0, historyLimit);
+    const html = groupEntriesByDay(shown).map(g => {
+        const cards = g.entries.map(e => {
+            const time = new Date(e.timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+            const pairs = ratedPairs(e.values);
+            const chips = pairs.length
+                ? `<ul class="chips">${pairs.map(([k, v]) => `<li class="chip">${escapeHtml(LABELS[k] || k)} <b>${escapeHtml(String(v))}</b></li>`).join('')}</ul>`
+                : '<p class="entry__empty">No ratings</p>';
+            const note = e.values && e.values.note ? String(e.values.note) : '';
+            const long = note.length > 140 || note.split('\n').length > 3;
+            const noteHtml = note
+                ? `<div class="entry-note${long ? ' entry-note--clamped' : ''}"><p class="entry-note__text">${escapeHtml(note)}</p></div>${long ? `<button type="button" class="link-btn" data-action="toggle-note" aria-expanded="false">Show full note</button>` : ''}`
+                : '';
+            const exportedBadge = e.exported ? `<span class="badge-exported">Exported</span>` : '';
+            const actions = `<div class="entry__actions"><button type="button" class="btn-small btn-secondary" data-action="edit" data-id="${e.id}" aria-label="Edit entry from ${escapeHtml(g.heading)} ${escapeHtml(time)}">Edit</button><button type="button" class="btn-small btn-danger" data-action="delete" data-id="${e.id}" aria-label="Delete entry from ${escapeHtml(g.heading)} ${escapeHtml(time)}">Delete</button></div>`;
+            return `<article class="entry"><div class="entry__meta"><span class="entry__time">${escapeHtml(time)}</span>${exportedBadge}</div>${chips}${noteHtml}${actions}</article>`;
         }).join('');
-        const noteHtml = (e.values && e.values.note) ? `<div class="entry-note"><strong>Note:</strong><div class="note-text">${escapeHtml(e.values.note)}</div></div>` : '';
-        const exportedBadge = e.exported ? `<span class="badge-exported">Exported</span>` : '';
-        const actions = `<div class="entry__actions"><button type="button" class="btn-small" data-action="edit" data-id="${e.id}">Edit</button><button type="button" class="btn-small btn-danger" data-action="delete" data-id="${e.id}">Delete</button></div>`;
-        return `<div class="entry"><div class="entry__meta"><strong>${date.toLocaleString()}</strong>${exportedBadge}</div><ul>${items}</ul>${noteHtml}${actions}</div>`;
+        return `<section class="day"><h3 class="day__heading">${escapeHtml(g.heading)}</h3>${cards}</section>`;
     }).join('');
-    container.innerHTML = html;
+    const more = entries.length > historyLimit
+        ? `<div class="history-more"><button type="button" class="btn-secondary" data-action="show-more">Show older entries (${entries.length - historyLimit} more)</button></div>`
+        : '';
+    container.innerHTML = html + more;
 }
 
 // --- Dynamic form rendering based on categories and tracked keys ---
@@ -791,61 +912,6 @@ function renderEmotionForm() {
     }
 
     // wire submit handler (existing initUI also attaches to form submit)
-}
-
-function openCategoriesModal() {
-    const modal = document.getElementById('categories-modal');
-    const list = document.getElementById('categories-list');
-    if (!modal || !list) return;
-    list.innerHTML = '';
-    const tracked = new Set(getTrackedKeys());
-
-    const effective = loadEffectiveCategories();
-    Object.entries(effective).forEach(([catId, cat]) => {
-        const group = document.createElement('fieldset');
-        const legend = document.createElement('legend');
-        legend.textContent = cat.title;
-        group.appendChild(legend);
-        cat.keys.forEach(k => {
-            const id = `chk_${k}`;
-            const wrap = document.createElement('div');
-            wrap.style.display = 'flex';
-            wrap.style.alignItems = 'center';
-            wrap.style.gap = '8px';
-            const chk = document.createElement('input');
-            chk.type = 'checkbox';
-            chk.id = id;
-            chk.value = k;
-            chk.checked = tracked.has(k);
-            const lbl = document.createElement('label');
-            lbl.setAttribute('for', id);
-            lbl.textContent = LABELS[k] || k;
-            wrap.appendChild(chk);
-            wrap.appendChild(lbl);
-            group.appendChild(wrap);
-        });
-        list.appendChild(group);
-    });
-
-    modal.hidden = false;
-    modal.setAttribute('aria-hidden', 'false');
-}
-
-function closeCategoriesModal() {
-    const modal = document.getElementById('categories-modal');
-    if (!modal) return;
-    modal.hidden = true;
-    modal.setAttribute('aria-hidden', 'true');
-}
-
-function saveCategoriesFromModal() {
-    const list = document.getElementById('categories-list');
-    if (!list) return;
-    const checked = Array.from(list.querySelectorAll('input[type="checkbox"]:checked')).map(c => c.value);
-    if (!checked || checked.length === 0) { flashMessage('Select at least one emotion to track', true); return; }
-    setTrackedKeys(checked);
-    closeCategoriesModal();
-    renderEmotionForm();
 }
 
 function escapeHtml(str) {
@@ -925,18 +991,8 @@ async function initUI() {
         if (rec) openEntryEditModal(rec); else flashMessage('Entry not found', true);
     });
 
-    // wire customize categories modal
-    const customize = document.getElementById('customize-emotions');
-    if (customize) customize.addEventListener('click', () => openCategoriesModal());
-    const saveBtn = document.getElementById('categories-save');
-    if (saveBtn) saveBtn.addEventListener('click', () => saveCategoriesFromModal());
-    const cancelBtn = document.getElementById('categories-cancel');
-    if (cancelBtn) cancelBtn.addEventListener('click', () => closeCategoriesModal());
-    const backdrop = document.getElementById('categories-backdrop');
-    if (backdrop) backdrop.addEventListener('click', () => closeCategoriesModal());
-
-    // wire categories edit modal
-    const editBtn = document.getElementById('edit-categories');
+    // wire the Manage emotions dialog
+    const editBtn = document.getElementById('manage-emotions');
     if (editBtn) editBtn.addEventListener('click', () => openCategoriesEditModal());
     const editSave = document.getElementById('categories-edit-save');
     if (editSave) editSave.addEventListener('click', () => saveCategoriesEditModal());
@@ -950,11 +1006,17 @@ async function initUI() {
         if (!list) return;
         const panel = makeCategoryPanel('', null);
         list.appendChild(panel);
+        panel.querySelector('.cat-edit__emotions').appendChild(makeEmotionRow('', '', true));
         panel.querySelector('.cat-edit__title').focus();
     });
     const resetBtn = document.getElementById('reset-categories');
     // Reset only refills the editor; nothing is stored until Save.
-    if (resetBtn) resetBtn.addEventListener('click', () => { renderCategoriesEditor(cloneCategories(CATEGORIES), DEFAULT_LABELS); flashMessage('Defaults restored. Press Save to keep them.'); });
+    if (resetBtn) resetBtn.addEventListener('click', () => { renderCategoriesEditor(cloneCategories(CATEGORIES), DEFAULT_LABELS, new Set(Object.values(CATEGORIES).reduce((a, c) => a.concat(c.keys), []))); flashMessage('Defaults restored. Press Save to keep them.'); });
+    const showKeys = document.getElementById('show-keys');
+    if (showKeys) showKeys.addEventListener('change', () => {
+        const modal = document.getElementById('categories-edit-modal');
+        if (modal) modal.classList.toggle('show-keys', showKeys.checked);
+    });
     const exportBtn = document.getElementById('export-categories');
     if (exportBtn) exportBtn.addEventListener('click', () => exportCategoriesConfig());
     const importCatsBtn = document.getElementById('import-categories');
@@ -962,33 +1024,21 @@ async function initUI() {
     if (importCatsBtn && importCatsFile) importCatsBtn.addEventListener('click', () => { importCatsFile.value=''; importCatsFile.click(); });
     if (importCatsFile) importCatsFile.addEventListener('change', async (ev) => { const file = ev.target.files && ev.target.files[0]; if (!file) return; await importCategoriesConfigFile(file); });
 
-    const viewBtn = document.getElementById('view-history');
-    const display = document.getElementById('emotion-display');
-    if (display) display.style.display = 'none';
-
-    if (viewBtn) viewBtn.addEventListener('click', async () => {
-        if (!display) return;
-        if (display.style.display === 'none' || display.style.display === '') {
-            const entries = await getAllEntries();
-            renderEntriesList(entries);
-            display.style.display = 'block';
-            viewBtn.textContent = 'Hide History';
-            viewBtn.setAttribute('aria-expanded', 'true');
-        } else {
-            display.style.display = 'none';
-            viewBtn.textContent = 'View History';
-            viewBtn.setAttribute('aria-expanded', 'false');
-        }
+    // Export sheet
+    const openExport = document.getElementById('open-export');
+    if (openExport) openExport.addEventListener('click', () => openExportModal());
+    const exportModal = document.getElementById('export-modal');
+    const exportForm = document.getElementById('export-form');
+    if (exportForm) exportForm.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const format = exportForm.querySelector('input[name="export-format"]:checked').value;
+        const scope = exportForm.querySelector('input[name="export-scope"]:checked').value;
+        if (await runExport(format, scope)) closeModal(exportModal);
     });
-
-    const exportJsonBtn = document.getElementById('export-json');
-    if (exportJsonBtn) exportJsonBtn.addEventListener('click', () => exportEntriesToJson());
-
-    const exportCsvBtn = document.getElementById('export-csv');
-    if (exportCsvBtn) exportCsvBtn.addEventListener('click', () => exportEntriesToCsv());
-
-    const exportUnsyncedBtn = document.getElementById('export-unsynced');
-    if (exportUnsyncedBtn) exportUnsyncedBtn.addEventListener('click', () => exportUnsyncedToCsv());
+    const exportCancel = document.getElementById('export-cancel');
+    if (exportCancel) exportCancel.addEventListener('click', () => closeModal(exportModal));
+    const exportBackdrop = document.getElementById('export-backdrop');
+    if (exportBackdrop) exportBackdrop.addEventListener('click', () => closeModal(exportModal));
 
     const importFile = document.getElementById('import-file');
     const importBtn = document.getElementById('import-json');
@@ -1024,7 +1074,7 @@ async function initUI() {
     const undoBtn = document.getElementById('undo-last-export');
     if (undoBtn) undoBtn.addEventListener('click', async () => {
         const raw = localStorage.getItem('lastExportedIds');
-        if (!raw) { flashMessage('Nothing to undo', true); return; }
+        if (!raw) { flashMessage('No export to undo', true); return; }
         let ids;
         try { ids = JSON.parse(raw); } catch (e) { flashMessage('Nothing to undo', true); return; }
         if (!Array.isArray(ids) || ids.length === 0) { flashMessage('Nothing to undo', true); return; }
@@ -1040,18 +1090,66 @@ async function initUI() {
         });
         tx.oncomplete = async () => {
             localStorage.removeItem('lastExportedIds');
-            const entries = await getAllEntries();
-            renderEntriesList(entries);
-            flashMessage('Undo complete');
+            await refreshViews();
+            flashMessage(`Marked ${ids.length} ${ids.length === 1 ? 'entry' : 'entries'} as not exported`);
         };
         tx.onerror = () => flashMessage('Undo failed', true);
     });
 
     initEntryEditing();
     initTrends();
+    initViews();
+}
 
-    const entries = await getAllEntries();
-    renderEntriesList(entries);
+// ----- Log / History / Settings views -----
+const VIEWS = ['log', 'history', 'settings'];
+
+// '#history' -> 'history'; anything unknown -> 'log'. Pure, so it is unit tested.
+function parseViewHash(hash) {
+    const v = String(hash || '').replace(/^#/, '').toLowerCase();
+    return VIEWS.includes(v) ? v : 'log';
+}
+
+async function showView(view, focusTab) {
+    VIEWS.forEach(v => {
+        const panel = document.getElementById('view-' + v);
+        const tab = document.getElementById('tab-' + v);
+        const active = v === view;
+        if (panel) panel.hidden = !active;
+        if (tab) {
+            tab.setAttribute('aria-selected', active ? 'true' : 'false');
+            tab.tabIndex = active ? 0 : -1;
+            if (active && focusTab) tab.focus();
+        }
+    });
+    if (view === 'history') {
+        historyLimit = HISTORY_PAGE;
+        await refreshViews();
+    }
+}
+
+function initViews() {
+    const tabs = VIEWS.map(v => document.getElementById('tab-' + v)).filter(Boolean);
+    tabs.forEach((tab, i) => {
+        tab.addEventListener('click', () => {
+            const view = tab.dataset.view;
+            if (location.hash !== '#' + view) location.hash = view; else showView(view);
+        });
+        // arrow keys move between tabs (ARIA tabs pattern)
+        tab.addEventListener('keydown', (ev) => {
+            let j = null;
+            if (ev.key === 'ArrowRight') j = (i + 1) % tabs.length;
+            else if (ev.key === 'ArrowLeft') j = (i - 1 + tabs.length) % tabs.length;
+            else if (ev.key === 'Home') j = 0;
+            else if (ev.key === 'End') j = tabs.length - 1;
+            if (j === null) return;
+            ev.preventDefault();
+            location.hash = tabs[j].dataset.view;
+            tabs[j].focus();
+        });
+    });
+    window.addEventListener('hashchange', () => showView(parseViewHash(location.hash)));
+    showView(parseViewHash(location.hash));
 }
 
 // ----- Dark mode helpers -----
@@ -1133,10 +1231,11 @@ function flashMessage(text, isError, action) {
 
 // Re-render whichever data views are currently visible after a change
 async function refreshViews() {
+    const history = document.getElementById('view-history');
+    if (history && history.hidden) return; // rendered when the History tab opens
     const entries = await getAllEntries();
     renderEntriesList(entries);
-    const trends = document.getElementById('trends');
-    if (trends && !trends.hidden) renderTrends(entries);
+    renderTrends(entries);
 }
 
 // Emotion keys in category order, followed by any extra keys found in the given entries
@@ -1172,6 +1271,19 @@ function initEntryEditing() {
     if (display) display.addEventListener('click', async (ev) => {
         const btn = ev.target.closest('button[data-action]');
         if (!btn) return;
+        if (btn.dataset.action === 'show-more') {
+            historyLimit += HISTORY_PAGE;
+            renderEntriesList(await getAllEntries());
+            return;
+        }
+        if (btn.dataset.action === 'toggle-note') {
+            const note = btn.previousElementSibling;
+            const open = note.classList.toggle('entry-note--clamped') === false;
+            btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+            btn.textContent = open ? 'Show less' : 'Show full note';
+            return;
+        }
+        if (btn.dataset.action === 'go-log') { location.hash = 'log'; return; }
         const id = Number(btn.dataset.id);
         if (btn.dataset.action === 'edit') {
             const rec = await getEntry(id);
@@ -1227,7 +1339,7 @@ function openEntryEditModal(rec) {
 
     document.getElementById('entry-edit-time').value = toDateTimeLocal(rec.timestamp);
     document.getElementById('entry-edit-note').value = vals.note || '';
-    modal.hidden = false; modal.setAttribute('aria-hidden', 'false');
+    openModal(modal);
     const first = fields.querySelector('input[type="radio"]:checked') || fields.querySelector('input[type="radio"]') || document.getElementById('entry-edit-time');
     if (first) first.focus();
 }
@@ -1235,7 +1347,7 @@ function openEntryEditModal(rec) {
 function closeEntryEditModal() {
     const modal = document.getElementById('entry-edit-modal');
     if (!modal) return;
-    modal.hidden = true; modal.setAttribute('aria-hidden', 'true');
+    closeModal(modal);
     editingEntry = null;
 }
 
@@ -1275,15 +1387,8 @@ function setTrendsPrefs(p) {
 }
 
 function initTrends() {
-    const toggle = document.getElementById('view-trends');
-    const section = document.getElementById('trends');
-    if (!toggle || !section) return;
-    toggle.addEventListener('click', async () => {
-        section.hidden = !section.hidden;
-        toggle.textContent = section.hidden ? 'View Trends' : 'Hide Trends';
-        toggle.setAttribute('aria-expanded', section.hidden ? 'false' : 'true');
-        if (!section.hidden) renderTrends(await getAllEntries());
-    });
+    const section = document.getElementById('view-history');
+    if (!section) return;
     document.querySelectorAll('#trends-range button[data-days]').forEach(btn => {
         btn.addEventListener('click', async () => {
             setTrendsPrefs(Object.assign(getTrendsPrefs(), { days: Number(btn.dataset.days) }));

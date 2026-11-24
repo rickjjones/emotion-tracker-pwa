@@ -183,12 +183,6 @@ footer {
     color: var(--muted);
 }
 
-.controls { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; justify-content:center }
-.controls button { padding:8px 10px; border-radius:8px; border:1px solid #ddd; background:#222; color:#fff }
-/* Clear All sits apart from the everyday buttons and reads as destructive */
-.controls .controls__danger { flex-basis:100%; display:flex; justify-content:center; margin-top:6px; padding-top:10px; border-top:1px solid var(--grid); }
-.controls .controls__danger button { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
-
 #emotion-display {
     margin-top: 14px;
 }
@@ -266,8 +260,6 @@ footer {
 .modal__panel div { margin:6px 0; }
 .modal__panel label { margin:0; font-weight:500; }
 
-/* Customize button styles */
-#customize-emotions, #customize-emotions:focus { background:transparent; color:var(--text); border:1px dashed rgba(0,0,0,0.08); padding:8px 10px; border-radius:8px; }
 
 /* Categories editor micro-styling */
 .cat-edit input { padding:6px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.06); }
@@ -352,3 +344,91 @@ html.dark .toast--error { color: #0b1220; }
 .saved-summary__text { margin: 0 0 12px; font-weight: 600; font-size: 1.05rem; }
 .saved-summary__actions { display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
 .btn-secondary { background: transparent; color: var(--text); border: 1px solid var(--grid); }
+
+/* ----- Views and tab bar ----- */
+.tabs { display: flex; gap: 4px; margin: 0 0 16px; border-bottom: 1px solid var(--grid); }
+.tabs button { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; background: transparent; color: var(--muted); border-radius: 8px 8px 0 0; border-bottom: 3px solid transparent; padding: 10px 16px; }
+.tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+.tabs__icon { font-size: 1.05rem; line-height: 1; }
+.view__title { font-size: 1.1rem; margin: 20px 0 8px; }
+
+@media (max-width: 520px) {
+    /* bottom tab bar within thumb reach */
+    .tabs {
+        position: fixed; left: 0; right: 0; bottom: 0; z-index: 1100; margin: 0;
+        background: var(--panel); border-top: 1px solid var(--grid); border-bottom: 0;
+        padding: 4px 8px calc(4px + env(safe-area-inset-bottom));
+        box-shadow: 0 -2px 12px rgba(0,0,0,0.08);
+    }
+    .tabs button { flex: 1 1 0; flex-direction: column; gap: 2px; font-size: 0.8rem; min-height: 56px; border-radius: 8px; border-bottom: 0; padding: 6px 4px; }
+    .tabs button[aria-selected="true"] { color: var(--accent); background: var(--chip-bg); }
+    .tabs__icon { font-size: 1.3rem; }
+    /* let the page grow past the viewport so the last control can scroll clear of the fixed bar */
+    html, body { height: auto; min-height: 100%; }
+    body { padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+    /* keep focused or scrolled-to controls from hiding under the bar (WCAG 2.4.11) */
+    html { scroll-padding-bottom: calc(88px + env(safe-area-inset-bottom)); }
+    .toast-region { bottom: calc(80px + env(safe-area-inset-bottom)); }
+    .sw-update { bottom: calc(76px + env(safe-area-inset-bottom)); }
+}
+
+/* ----- Settings cards ----- */
+.card { padding: 14px 16px; margin: 0 0 12px; border-radius: 10px; border: 1px solid var(--grid); background: var(--card); }
+.card h2 { margin: 0 0 4px; font-size: 1.05rem; }
+.card .helper-text { margin: 0 0 10px; }
+.card__actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 10px; }
+.card--danger { border-color: var(--danger); }
+.link-btn { background: none; border: 0; padding: 0; min-height: 0; color: var(--accent); font-weight: 600; font-size: inherit; text-decoration: underline; cursor: pointer; }
+html.dark .link-btn { color: var(--accent); }
+.icon-btn { background: transparent; color: var(--muted); border: 1px solid var(--grid); width: 44px; height: 44px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.icon-btn:hover { color: var(--danger); border-color: var(--danger); }
+
+/* ----- History ----- */
+.day { margin: 0 0 12px; }
+.day__heading { position: sticky; top: 0; z-index: 1; margin: 0 0 6px; padding: 6px 0; font-size: 0.95rem; color: var(--muted); background: var(--panel); }
+.entry__time { font-weight: 700; }
+.entry .chips, .chips { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { padding: 4px 10px; border-radius: 999px; background: var(--input-bg); border: 1px solid var(--grid); font-size: 0.9rem; }
+.chip b { margin-left: 2px; }
+.entry__empty { margin: 8px 0 0; color: var(--muted); font-size: 0.9rem; }
+.entry .entry-note { margin: 8px 0 0; background: var(--input-bg); border: 1px solid var(--grid); padding: 8px; border-radius: 6px; }
+.entry-note__text { margin: 0; white-space: pre-wrap; line-height: 1.4; }
+.entry-note--clamped .entry-note__text { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.entry .link-btn { margin-top: 4px; font-size: 0.9rem; }
+.empty-state { text-align: center; padding: 24px 12px; color: var(--muted); }
+.history-more { text-align: center; margin: 8px 0; }
+
+/* ----- Dialogs ----- */
+.modal__footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.modal__panel--sheet { display: flex; flex-direction: column; max-height: 85vh; padding: 0; overflow: hidden; }
+#categories-edit-modal .modal__panel { max-height: 85vh; overflow: hidden; }
+.modal__body { overflow: auto; padding: 18px 18px 8px; }
+.modal__panel--sheet .modal__footer { margin: 0; padding: 12px 18px; border-top: 1px solid var(--grid); background: var(--panel); }
+.modal__panel h2 { margin-top: 0; }
+.check-row, .modal__panel label.check-row { display: flex; align-items: center; gap: 8px; width: auto; min-width: 0; margin: 6px 0; font-weight: 500; }
+.check-row input { width: 20px; height: 20px; margin: 0; flex: none; accent-color: var(--accent); }
+.choice { min-width: 0; border: 0; padding: 0; margin: 0 0 12px; }
+.choice legend { font-weight: 700; margin-bottom: 4px; }
+.choice .helper-text { font-size: 0.85rem; }
+
+/* Manage emotions */
+.modal__panel fieldset.cat-edit { min-width: 0; border: 1px solid var(--grid); border-radius: 10px; padding: 10px; margin: 0 0 12px; }
+.cat-edit__head { display: flex; gap: 8px; align-items: center; }
+.cat-edit__title { flex: 1; min-width: 0; font-weight: 700; }
+.cat-edit input[type="text"] { padding: 8px 10px; border-radius: 6px; border: 1px solid var(--grid); background: var(--input-bg); color: var(--text); font-size: 1rem; min-height: 44px; }
+.modal__panel .cat-edit__emotion { display: flex; align-items: center; gap: 8px; margin: 6px 0; }
+.cat-edit__show { width: 22px; height: 22px; flex: none; margin: 0 11px; accent-color: var(--accent); }
+.cat-edit__label { flex: 1 1 auto; min-width: 0; }
+.cat-edit__key { display: none; flex: 0 1 40%; min-width: 0; font-family: ui-monospace, monospace; font-size: 0.85rem !important; }
+.show-keys .cat-edit__key { display: block; }
+.cat-edit > .btn-small { margin-top: 4px; }
+.more-options { margin: 12px 0 4px; }
+.more-options summary { cursor: pointer; font-weight: 600; padding: 8px 0; }
+@media (max-width: 520px) {
+    .modal { align-items: flex-end; }
+    .modal__panel, .modal__panel--sheet { width: 100%; max-width: none; border-radius: 14px 14px 0 0; max-height: 92vh; }
+    #entry-edit-modal .modal__panel, #export-modal .modal__panel { max-height: 92vh; overflow: auto; }
+    .cat-edit__head .btn-small { white-space: nowrap; }
+    .show-keys .cat-edit__emotion { flex-wrap: wrap; }
+    .show-keys .cat-edit__key { flex: 1 1 100%; order: 3; margin-left: 44px; }
+}
