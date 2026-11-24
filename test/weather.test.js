@@ -169,6 +169,77 @@ describe('Weather', () => {
         });
     });
 
+    // Shared by the chart tests below: mood dots and rain bars from one SVG string.
+    const moodDots = svg => [...svg.matchAll(/<circle class="trend-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map(m => [+m[1], +m[2]]);
+    const rainBars = svg => [...svg.matchAll(/<rect class="trend-wx-bar" x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/g)].map(m => ({ top: +m[1], bottom: +m[1] + +m[2] }));
+    const plotBottom = svg => Math.max(...[...svg.matchAll(/<line class="trend-grid" x1="\d+" x2="\d+" y1="([\d.]+)"/g)].slice(0, 4).map(m => +m[1])); // the "1" grid line
+    const week = () => Array.from({ length: 7 }, (_, i) => ({ timestamp: at(2026, 11, 17 + i, 10), values: { energy: 2 + i }, weather: { status: 'ok', temp: 40 + i * 3, pressure: 1005 + i, humidity: 50 + i, precip: i % 2 ? 0 : 1 + i } }));
+    const chartFor = (entries, metric, width = 640) => app.buildTrendSvg(app.computeDailySeries(entries, 'energy', 7, NOW), 'Energy', width,
+        metric ? { metric, units: 'metric', label: metric, series: app.computeDailyWeather(entries, metric, 'metric', 7, NOW) } : null);
+
+    describe('Chart: rain must not hide the mood line', () => {
+        it('R: rain bars sit in their own strip below the mood plot', () => {
+            for (const width of [320, 640]) {
+                const svg = chartFor(week(), 'precip', width);
+                const bars = rainBars(svg);
+                assert.equal(bars.length, 4);
+                const floor = plotBottom(svg);
+                assert.ok(bars.every(b => b.top > floor), `bar tops ${bars.map(b => b.top)} vs plot bottom ${floor}`);
+            }
+        });
+
+        it('R: every mood dot is still drawn with rain selected', () => {
+            assert.equal(moodDots(chartFor(week(), 'precip')).length, 7);
+            assert.equal((chartFor(week(), 'precip').match(/class="trend-line"/g) || []).length, 6);
+        });
+
+        it('B: a single day of data (mood dot and rain bar on the same day) does not overlap', () => {
+            const one = [{ timestamp: at(2026, 11, 23, 10), values: { energy: 1 }, weather: { status: 'ok', precip: 4 } }];
+            const svg = chartFor(one, 'precip');
+            const [[, cy]] = moodDots(svg);
+            const [bar] = rainBars(svg);
+            assert.ok(bar.top > cy + 4, `bar top ${bar.top} vs lowest possible mood dot ${cy}`);
+        });
+
+        it('B: heaviest rain still stays inside the strip and the picture', () => {
+            const wet = week().map(e => Object.assign(e, { weather: Object.assign(e.weather, { precip: 80 }) }));
+            const svg = chartFor(wet, 'precip');
+            const H = +svg.match(/viewBox="0 0 \d+ (\d+)"/)[1];
+            rainBars(svg).forEach(b => { assert.ok(b.top > plotBottom(svg)); assert.ok(b.bottom < H - 20); });
+        });
+
+        it('I: turning rain off gives back the original chart height', () => {
+            const h = svg => +svg.match(/viewBox="0 0 \d+ (\d+)"/)[1];
+            assert.equal(h(chartFor(week(), null)), 260);
+            assert.ok(h(chartFor(week(), 'precip')) > 260);
+            assert.equal(h(chartFor(week(), 'temp')), 260);
+        });
+
+        it('C: the mood scale is the same with or without any weather overlay', () => {
+            // heights only: x shifts a little because the right-hand axis needs room
+            const ys = svg => moodDots(svg).map(([, cy]) => cy);
+            const base = ys(chartFor(week(), null));
+            for (const metric of ['temp', 'pressure', 'humidity', 'precip']) {
+                assert.deepEqual(ys(chartFor(week(), metric)), base, metric);
+            }
+        });
+
+        it('C: mood is drawn after (on top of) the weather for every metric', () => {
+            for (const metric of ['temp', 'pressure', 'humidity', 'precip']) {
+                const svg = chartFor(week(), metric);
+                const lastWx = Math.max(svg.lastIndexOf('trend-wx-'), svg.lastIndexOf('trend-axis--wx'));
+                assert.ok(svg.indexOf('class="trend-dot"') > lastWx, metric);
+            }
+        });
+
+        it('E: all-dry days draw no bars but keep the strip and the mood', () => {
+            const dry = week().map(e => Object.assign(e, { weather: Object.assign(e.weather, { precip: 0 }) }));
+            const svg = chartFor(dry, 'precip');
+            assert.equal(rainBars(svg).length, 0);
+            assert.equal(moodDots(svg).length, 7);
+        });
+    });
+
     describe('B: boundary conditions (CORRECT)', () => {
         it('Conformance: off by default, units follow the locale', () => {
             assert.equal(app.getWeatherSettings().enabled, false);

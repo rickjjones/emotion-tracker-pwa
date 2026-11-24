@@ -1923,7 +1923,7 @@ function renderTrends(entries) {
         legend.hidden = !overlay;
         legend.innerHTML = overlay
             ? `<span class="trends__key"><span class="trends__swatch" aria-hidden="true"></span>${escapeHtml(LABELS[key] || key)} (1–10, left)</span>`
-              + `<span class="trends__key"><span class="trends__swatch trends__swatch--wx${overlay.metric === 'precip' ? ' trends__swatch--bar' : ''}" aria-hidden="true"></span>${escapeHtml(overlay.label)} (${escapeHtml(weatherUnit(overlay.metric, overlay.units))}, right)</span>`
+              + `<span class="trends__key"><span class="trends__swatch trends__swatch--wx${overlay.metric === 'precip' ? ' trends__swatch--bar' : ''}" aria-hidden="true"></span>${escapeHtml(overlay.label)} (${escapeHtml(weatherUnit(overlay.metric, overlay.units))}, ${overlay.metric === 'precip' ? 'bars below' : 'right'})</span>`
               + (overlay.series ? '' : `<span class="trends__key">No weather in this range yet</span>`)
             : '';
     }
@@ -1957,10 +1957,14 @@ function summarizeSeries(series) {
 // `overlay` (optional) = { metric, units, label, series: [{ date, value }] } draws weather on a right-hand axis.
 function buildTrendSvg(series, label, width, overlay) {
     // draw at the container's real width so text stays readable on phones
-    const W = Math.max(280, Math.round(width || 640)), H = W < 480 ? 200 : 260;
+    const W = Math.max(280, Math.round(width || 640));
     const wxSeries = overlay && Array.isArray(overlay.series) && overlay.series.length === series.length ? overlay.series : null;
     const axis = wxSeries ? weatherAxis(wxSeries.map(p => p.value), overlay.metric) : null;
-    const m = { top: 14, right: axis ? 46 : 16, bottom: 30, left: 30 };
+    // Rain bars get their own strip under the mood plot. Drawn over the mood scale they hid
+    // the mood line and dots, and bar heights read as if they were on the 1–10 scale.
+    const band = axis && overlay.metric === 'precip' ? (W < 480 ? 44 : 52) : 0;
+    const H = (W < 480 ? 200 : 260) + band;
+    const m = { top: 14, right: axis ? 46 : 16, bottom: 30 + band, left: 30 };
     const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
     const n = series.length;
     const x = i => m.left + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
@@ -1998,9 +2002,15 @@ function buildTrendSvg(series, label, width, overlay) {
     // weather goes underneath the mood line
     let wx = '';
     if (axis) {
-        const yw = v => m.top + ih - ((v - axis.min) / (axis.max - axis.min)) * ih;
         const short = { temp: '°', humidity: '%', pressure: '', precip: '' }[overlay.metric] || '';
-        axis.ticks.forEach(t => {
+        // rain: its own strip below the plot (bottom = 0, top = axis max); others share the plot height
+        const bTop = m.top + ih + 14, bBot = m.top + ih + band - 2;
+        const yw = overlay.metric === 'precip'
+            ? v => bBot - ((v - axis.min) / (axis.max - axis.min)) * (bBot - bTop)
+            : v => m.top + ih - ((v - axis.min) / (axis.max - axis.min)) * ih;
+        const ticks = overlay.metric === 'precip' ? [axis.min, axis.max] : axis.ticks;
+        if (overlay.metric === 'precip') wx += `<line class="trend-grid" x1="${m.left}" x2="${W - m.right}" y1="${bBot}" y2="${bBot}"/>`;
+        ticks.forEach(t => {
             wx += `<text class="trend-axis trend-axis--wx" x="${W - m.right + 6}" y="${(yw(t) + 4).toFixed(1)}" text-anchor="start">${escapeHtml(t.toFixed(axis.decimals) + short)}</text>`;
         });
         const tipFor = p => `${fmt(p.date)}: ${overlay.label} ${formatWeatherValue(overlay.metric, p.value, overlay.units)}${overlay.metric === 'precip' ? ' an hour' : ''}`;
