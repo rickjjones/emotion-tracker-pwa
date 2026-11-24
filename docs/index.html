@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="styles.css">
     <title>LifeLens</title>
-    <meta name="theme-color" content="#4CAF50">
+    <meta name="theme-color" content="#2e7d32">
     <link rel="manifest" href="manifest.json"> <!-- removed leading slash -->
     <link rel="icon" href="icon-192x192.svg">    <!-- removed leading slash -->
 </head>
@@ -13,7 +13,7 @@
     <div class="container">
         <div class="topbar">
             <h1>LifeLens</h1>
-            <button id="theme-toggle" aria-label="Toggle dark mode" title="Toggle dark mode">🌙</button>
+            <button id="theme-toggle" type="button" aria-label="Switch to dark mode" title="Switch to dark mode">🌙</button>
         </div>
 
         <!-- Categories editor modal -->
@@ -35,10 +35,9 @@
                 </div>
             </div>
         </div>
-        <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
-            <button id="customize-emotions" title="Customize which emotions to track">Customize Emotions</button>
-            <button id="edit-categories" title="Edit categories and emotion labels">Edit Categories</button>
-            <span style="color:#666;font-size:0.9rem;">Select which emotions appear on the form or edit categories</span>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-bottom:8px;">
+            <button id="customize-emotions" type="button" title="Choose which emotions appear on the form">Customize Emotions</button>
+            <button id="edit-categories" type="button" title="Rename, add or remove categories and emotions">Edit Categories</button>
         </div>
 
         <!-- The form is rendered dynamically by app.js based on selected categories/emotions -->
@@ -47,7 +46,7 @@
         <!-- Categories / emotion selection modal -->
         <div id="categories-modal" class="modal" hidden aria-hidden="true">
             <div class="modal__backdrop" id="categories-backdrop"></div>
-            <div class="modal__panel" role="dialog" aria-modal="modal__panel" aria-labelledby="categories-title">
+            <div class="modal__panel" role="dialog" aria-modal="true" aria-labelledby="categories-title">
                 <h2 id="categories-title">Choose emotions to track</h2>
                 <div id="categories-list"></div>
                 <div style="margin-top:12px;text-align:right;">
@@ -58,19 +57,19 @@
         </div>
 
         <div class="controls">
-            <button id="view-history">View History</button>
-            <button id="view-trends">View Trends</button>
-            <button id="export-json">Export JSON</button>
-            <button id="export-csv">Export CSV</button>
-            <button id="export-unsynced">Export Unsynced</button>
-            <button id="undo-last-export">Undo Last Export</button>
-            <button id="import-json">Import JSON</button>
-            <button id="clear-all">Clear All</button>
+            <button id="view-history" type="button" aria-expanded="false" aria-controls="emotion-display">View History</button>
+            <button id="view-trends" type="button" aria-expanded="false" aria-controls="trends">View Trends</button>
+            <button id="export-json" type="button">Export JSON</button>
+            <button id="export-csv" type="button">Export CSV</button>
+            <button id="export-unsynced" type="button">Export Unsynced</button>
+            <button id="undo-last-export" type="button">Undo Last Export</button>
+            <button id="import-json" type="button">Import JSON</button>
             <input type="file" id="import-file" accept="application/json" style="display:none">
+            <div class="controls__danger">
+                <button id="clear-all" type="button">Clear All Entries</button>
+            </div>
         </div>
-        <div style="text-align:center;margin-top:8px;color:#666;font-size:0.9rem;">
-            <span style="display:inline-block;margin-right:8px">• <strong>Exported</strong> entries are marked in history</span>
-        </div>
+        <p class="helper-text" style="text-align:center;margin:8px 0 0;">Entries you have exported are marked <strong>Exported</strong> in history.</p>
 
         <section id="trends" class="trends" hidden aria-labelledby="trends-title">
             <div class="trends__header">
@@ -110,6 +109,8 @@
             </form>
         </div>
     </div>
+    <!-- Toasts are written here so screen readers announce them -->
+    <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
     <script src="app.js"></script>
 
         <script>
@@ -168,8 +169,7 @@
                     });
 
                     const cancelBtn = document.createElement('button');
-                    cancelBtn.className = 'sw-update__btn';
-                    cancelBtn.style.background = '#999';
+                    cancelBtn.className = 'sw-update__btn sw-update__btn--secondary';
                     cancelBtn.textContent = 'Cancel';
                     cancelBtn.addEventListener('click', () => {
                         clearInterval(countdown);

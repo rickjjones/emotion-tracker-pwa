@@ -39,6 +39,17 @@ const LABELS = {
 // Default labels are kept separately so "Reset to defaults" can restore them.
 const DEFAULT_LABELS = Object.assign({}, LABELS);
 
+// Shown above the rating form so the 1-10 scale has fixed anchors
+const SCALE_HINT = 'Rate each from 1 (not at all) to 10 (extremely). Leave a box blank to skip it.';
+
+// Wording for the Clear All confirmation: say how much will be lost and how to keep it.
+function clearAllConfirmText(count) {
+    const n = Number.isFinite(count) && count > 0 ? Math.floor(count) : 0;
+    if (n === 0) return 'There are no entries to delete.';
+    const what = n === 1 ? 'your 1 entry' : `all ${n} entries`;
+    return `Delete ${what}? This cannot be undone. Use Export JSON first if you want a backup.`;
+}
+
 // localStorage key for tracked emotion keys
 const LS_TRACKED = 'll_tracked_emotions_v1';
 const LS_CATEGORIES = 'll_categories_v1';
@@ -610,6 +621,13 @@ function renderEmotionForm() {
 
     const tracked = new Set(getTrackedKeys());
 
+    // say what the numbers mean before the first rating
+    const hint = document.createElement('p');
+    hint.id = 'scale-hint';
+    hint.className = 'scale-hint';
+    hint.textContent = SCALE_HINT;
+    form.appendChild(hint);
+
     const effective = loadEffectiveCategories();
     Object.entries(effective).forEach(([catId, cat]) => {
         // check if any key in this category is tracked
@@ -633,6 +651,8 @@ function renderEmotionForm() {
             input.name = k;
             input.min = 1;
             input.max = 10;
+            input.inputMode = 'numeric'; // number pad instead of the full keyboard on phones
+            input.setAttribute('aria-describedby', 'scale-hint');
             row.appendChild(label);
             row.appendChild(input);
             form.appendChild(row);
@@ -790,9 +810,11 @@ async function initUI() {
             renderEntriesList(entries);
             display.style.display = 'block';
             viewBtn.textContent = 'Hide History';
+            viewBtn.setAttribute('aria-expanded', 'true');
         } else {
             display.style.display = 'none';
             viewBtn.textContent = 'View History';
+            viewBtn.setAttribute('aria-expanded', 'false');
         }
     });
 
@@ -828,7 +850,9 @@ async function initUI() {
 
     const clearBtn = document.getElementById('clear-all');
     if (clearBtn) clearBtn.addEventListener('click', async () => {
-        if (!confirm('Clear all emotion entries?')) return;
+        const count = (await getAllEntries()).length;
+        if (count === 0) { flashMessage(clearAllConfirmText(0)); return; }
+        if (!confirm(clearAllConfirmText(count))) return;
         await clearAllEntries();
         await refreshViews();
         flashMessage('Cleared');
@@ -874,9 +898,14 @@ function applyTheme(isDark) {
         if (isDark) html.classList.add('dark'); else html.classList.remove('dark');
         // update meta theme-color so mobile UI (status bar) matches
         const meta = document.querySelector('meta[name="theme-color"]');
-        if (meta) meta.setAttribute('content', isDark ? '#0b1220' : '#4CAF50');
+        if (meta) meta.setAttribute('content', isDark ? '#0b1220' : '#2e7d32');
         const btn = document.getElementById('theme-toggle');
-        if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+        if (btn) {
+            btn.textContent = isDark ? '☀️' : '🌙';
+            const label = isDark ? 'Switch to light mode' : 'Switch to dark mode';
+            btn.setAttribute('aria-label', label);
+            btn.title = label;
+        }
     } catch (e) { console.error(e); }
 }
 
@@ -903,19 +932,38 @@ function initTheme() {
 // initialize theme early
 try { initTheme(); } catch (e) { /* ignore */ }
 
-function flashMessage(text, isError) {
-    const container = document.createElement('div');
-    container.textContent = text;
-    container.style.position = 'fixed';
-    container.style.right = '16px';
-    container.style.bottom = '16px';
-    container.style.background = isError ? '#c0392b' : '#2ecc71';
-    container.style.color = '#fff';
-    container.style.padding = '8px 12px';
-    container.style.borderRadius = '6px';
-    container.style.boxShadow = '0 2px 6px rgba(0,0,0,.2)';
-    document.body.appendChild(container);
-    setTimeout(() => container.remove(), 2500);
+// Show a short message in the shared live region (announced by screen readers).
+// `action` = { label, onClick } adds a button, e.g. Undo, and keeps the toast up longer.
+function flashMessage(text, isError, action) {
+    let region = document.getElementById('toast-region');
+    if (!region) {
+        region = document.createElement('div');
+        region.id = 'toast-region';
+        region.className = 'toast-region';
+        region.setAttribute('role', 'status');
+        region.setAttribute('aria-live', 'polite');
+        document.body.appendChild(region);
+    }
+    const toast = document.createElement('div');
+    toast.className = 'toast' + (isError ? ' toast--error' : '');
+    const msg = document.createElement('span');
+    msg.textContent = text;
+    toast.appendChild(msg);
+    let timer = null;
+    if (action && action.label && typeof action.onClick === 'function') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'toast__action';
+        btn.textContent = action.label;
+        btn.addEventListener('click', () => {
+            clearTimeout(timer);
+            toast.remove();
+            action.onClick();
+        });
+        toast.appendChild(btn);
+    }
+    region.appendChild(toast);
+    timer = setTimeout(() => toast.remove(), action ? 6000 : 2500);
 }
 
 // ----- Shared helpers for history / trends -----
@@ -966,10 +1014,19 @@ function initEntryEditing() {
             const rec = await getEntry(id);
             if (rec) openEntryEditModal(rec); else flashMessage('Entry not found', true);
         } else if (btn.dataset.action === 'delete') {
-            if (!confirm('Delete this entry? This cannot be undone.')) return;
+            // delete straight away and offer Undo, instead of asking first
+            const rec = await getEntry(id);
+            if (!rec) { flashMessage('Entry not found', true); return; }
             await deleteEntry(id);
             await refreshViews();
-            flashMessage('Entry deleted');
+            flashMessage('Entry deleted', false, {
+                label: 'Undo',
+                onClick: async () => {
+                    await updateEntry(rec); // put() with the same id brings it back unchanged
+                    await refreshViews();
+                    flashMessage('Entry restored');
+                }
+            });
         }
     });
 
@@ -1000,6 +1057,7 @@ function openEntryEditModal(rec) {
         label.textContent = LABELS[k] || k;
         const input = document.createElement('input');
         input.type = 'number'; input.min = 1; input.max = 10;
+        input.inputMode = 'numeric';
         input.id = 'edit_' + k; input.dataset.key = k;
         if (vals[k] !== null && typeof vals[k] !== 'undefined') input.value = vals[k];
         row.appendChild(label); row.appendChild(input);
@@ -1062,6 +1120,7 @@ function initTrends() {
     toggle.addEventListener('click', async () => {
         section.hidden = !section.hidden;
         toggle.textContent = section.hidden ? 'View Trends' : 'Hide Trends';
+        toggle.setAttribute('aria-expanded', section.hidden ? 'false' : 'true');
         if (!section.hidden) renderTrends(await getAllEntries());
     });
     document.querySelectorAll('#trends-range button[data-days]').forEach(btn => {
@@ -1198,7 +1257,7 @@ function buildTrendSvg(series, label, width) {
         return `<circle class="trend-dot" cx="${x(i).toFixed(1)}" cy="${y(p.avg).toFixed(1)}" r="${r}"><title>${escapeHtml(tip)}</title></circle>`;
     }).join('');
 
-    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(label)} daily average over the last ${n} days">${grid}${xLabels}${lines}${dots}</svg>`;
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${escapeHtml(label)} daily average over the last ${n} days" aria-describedby="trends-summary">${grid}${xLabels}${lines}${dots}</svg>`;
 }
 
 document.addEventListener('DOMContentLoaded', initUI);
