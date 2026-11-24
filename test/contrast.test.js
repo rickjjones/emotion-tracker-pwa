@@ -34,7 +34,8 @@ const PAIRS = [
     ['text', 'panel'],
     ['muted', 'panel'],          // helper text, scale legend
     ['placeholder', 'input-bg'], // "Add a note..."
-    ['danger', 'panel']          // Delete / Clear All outlines
+    ['danger', 'panel'],         // Delete / Clear All outlines
+    ['wx', 'card']               // weather axis labels and line on the trends chart
 ];
 const AA = 4.5;
 
