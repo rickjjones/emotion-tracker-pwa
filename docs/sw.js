@@ -1,13 +1,17 @@
 // service worker for docs/ site (use relative paths so it works on GitHub Pages project sites)
-const CACHE_NAME = 'emotion-tracker-v33';
+const CACHE_NAME = 'emotion-tracker-v34';
 const ASSETS = [
   './',
   'index.html',
   'styles.css',
   'app.js',
   'manifest.json',
-  'icon-192x192.svg',
-  'icon-512x512.svg'
+  'icons/icon.svg',
+  'icons/icon-192.png',
+  'icons/icon-512.png',
+  'icons/icon-maskable-512.png',
+  'icons/apple-touch-icon.png',
+  'icons/favicon-32.png'
 ];
 
 // Install: precache assets but do NOT skipWaiting here. The new worker waits
