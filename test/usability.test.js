@@ -71,11 +71,12 @@ describe('Clear All confirmation text', () => {
 });
 
 describe('Rating scale legend', () => {
-    it('R: anchors both ends of the 1-10 scale and explains skipping', () => {
+    it('R: anchors both ends of the 1-5 scale and explains skipping', () => {
         const { get } = loadApp();
         const hint = get('SCALE_HINT');
         assert.match(hint, /1 \(not at all\)/);
-        assert.match(hint, /10 \(extremely\)/);
+        assert.match(hint, /5 \(extremely\)/);
+        assert.doesNotMatch(hint, /10/);
         assert.match(hint, /skip/i);
         assert.match(hint, /tap a number again to clear/);
     });

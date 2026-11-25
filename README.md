@@ -4,7 +4,7 @@ A small, offline-first Progressive Web App to record and review mood / behavior 
 
 ## What’s new / current state
 - UI grouped into three categories: High Moods, Low Moods, and ADHD-related items.
-- Ratings are numeric (1–10) for each tracked item and a free-text `Note` is stored with each entry.
+- Ratings are numeric (1–5) for each tracked item and a free-text `Note` is stored with each entry.
 - Data persisted locally using IndexedDB (no server required).
 - History view with export / import (JSON) and clear-all options.
 - Service worker with precaching and an update-banner flow (skipWaiting + clients) so users can reload to activate new versions.
@@ -45,7 +45,7 @@ emotion-tracker-pwa/
 
 ## How it works (brief)
 - IndexedDB: a tiny wrapper in `docs/app.js` stores each entry (timestamp, numeric ratings, note).
-- UI: `index.html` contains grouped category headings and numeric inputs (1–10). The `note` field is a textarea.
+- UI: `index.html` contains grouped category headings and a 1–5 tap scale per emotion. The `note` field is a textarea.
 - History: saved entries render in a list. Use Export to download JSON, Import to restore, or Clear All to remove local data.
 - Service worker: `docs/sw.js` precaches core assets and supports an update flow — when a new SW version is installed, the page shows an update banner allowing users to reload and activate the new version immediately.
  - Customization: the main form is rendered dynamically from a category/emotion structure in `docs/app.js`. Open "Customize Emotions" to pick individual emotions; choices are saved under the `localStorage` key `ll_tracked_emotions_v1`. The app prevents saving an empty tracked set and falls back to a sensible default if the saved value is empty or invalid.

@@ -316,7 +316,7 @@ html.dark .toast--error { color: #0b1220; }
     .toast__action { min-height: 44px; }
 }
 
-/* 1-10 tap scale: native radios, visually replaced by numbered segments */
+/* 1-5 tap scale: native radios, visually replaced by numbered segments */
 .emotion--scale { flex-wrap: wrap; }
 .emotion__label { display:block; font-weight:bold; width:32%; min-width:100px; }
 .scale { flex: 1; display: flex; gap: 4px; min-width: 0; }

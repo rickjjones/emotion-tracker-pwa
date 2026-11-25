@@ -56,10 +56,11 @@ describe('Entry storage', () => {
         });
 
         it('normalizes imported records and bare value objects', () => {
-            assert.deepEqual(plain(app.normalizeImportRecord({ timestamp: TS, values: { energy: 3 }, exported: true })),
-                { timestamp: TS, values: { energy: 3 }, exported: true });
+            assert.deepEqual(plain(app.normalizeImportRecord({ timestamp: TS, values: { energy: 3 }, exported: true, scale: 5 })),
+                { timestamp: TS, values: { energy: 3 }, exported: true, scale: 5 });
+            // unmarked items come from the 1-10 app and are converted (4 -> 2)
             const bare = plain(app.normalizeImportRecord({ energy: 4 }));
-            assert.deepEqual(bare.values, { energy: 4 });
+            assert.deepEqual(bare.values, { energy: 2 });
             assert.equal(bare.exported, false);
         });
     });

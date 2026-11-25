@@ -2,7 +2,7 @@
   "name": "emotion-tracker-pwa",
   "version": "1.0.0",
   "private": true,
-  "description": "A Progressive Web App for tracking emotions on a scale of 1 to 10.",
+  "description": "A Progressive Web App for tracking emotions on a scale of 1 to 5.",
   "scripts": {
     "start": "npx --yes http-server docs -c-1",
     "test": "node --test \"test/**/*.test.js\""
