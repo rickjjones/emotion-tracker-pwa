@@ -39,8 +39,13 @@ const LABELS = {
 // Default labels are kept separately so "Reset to defaults" can restore them.
 const DEFAULT_LABELS = Object.assign({}, LABELS);
 
-// Shown above the rating form so the 1-10 scale has fixed anchors
-const SCALE_HINT = 'Rate each from 1 (not at all) to 10 (extremely). Skip any you don\'t want to rate, and tap a number again to clear it.';
+// Ratings run 1..SCALE_MAX. Entries saved before the switch from 1-10 are converted
+// once (see toScale5); records written on this scale carry `scale: SCALE_MAX`.
+const SCALE_MAX = 5;
+const LEGACY_SCALE_MAX = 10;
+
+// Shown above the rating form so the 1-5 scale has fixed anchors
+const SCALE_HINT = 'Rate each from 1 (not at all) to 5 (extremely). Skip any you don\'t want to rate, and tap a number again to clear it.';
 
 // Wording for the Clear All confirmation: say how much will be lost and how to keep it.
 function clearAllConfirmText(count) {
@@ -52,7 +57,33 @@ function clearAllConfirmText(count) {
 
 // ----- Rating scale, draft autosave, post-save summary -----
 
-// Build a 1-10 tap scale. The value lives in a hidden input with id `inputId`
+// Map a rating from the old 1-10 scale onto 1-5: 1-2 -> 1, 3-4 -> 2, 5-6 -> 3, 7-8 -> 4, 9-10 -> 5.
+// Each new point covers exactly two old points, and it matches a straight linear rescale
+// (1 + (v - 1) * 4 / 9, rounded) at every value. Non-numbers (null, notes) pass through.
+function toScale5(v) {
+    if (typeof v !== 'number' || !Number.isFinite(v)) return v;
+    return Math.max(1, Math.min(SCALE_MAX, Math.ceil(v / 2)));
+}
+
+// Copy of a values object with every rating converted from 1-10 to 1-5. The note is untouched.
+function valuesToScale5(values) {
+    if (!values || typeof values !== 'object' || Array.isArray(values)) return values;
+    const out = {};
+    Object.entries(values).forEach(([k, v]) => { out[k] = k === 'note' ? v : toScale5(v); });
+    return out;
+}
+
+// Bring a stored or imported record onto the 1-5 scale. Records already marked
+// `scale: 5` come back unchanged; older ones are converted and keep their original
+// 1-10 ratings in `legacyValues10`, so nothing the user typed is thrown away.
+function migrateRecordToScale5(rec) {
+    if (!rec || typeof rec !== 'object' || rec.scale === SCALE_MAX) return rec;
+    const out = Object.assign({}, rec, { values: valuesToScale5(rec.values), scale: SCALE_MAX });
+    if (rec.values && typeof rec.values === 'object' && !rec.legacyValues10) out.legacyValues10 = Object.assign({}, rec.values);
+    return out;
+}
+
+// Build a 1-5 tap scale. The value lives in a hidden input with id `inputId`
 // (and data-key), so code that reads inputs by id keeps working. Native radios
 // give arrow-key navigation for free; tapping the selected number clears it.
 function buildRatingScale(key, inputId, labelId, value) {
@@ -68,7 +99,7 @@ function buildRatingScale(key, inputId, labelId, value) {
     hidden.dataset.key = key;
     hidden.value = value === null || typeof value === 'undefined' ? '' : String(value);
     wrap.appendChild(hidden);
-    for (let n = 1; n <= 10; n++) {
+    for (let n = 1; n <= SCALE_MAX; n++) {
         const opt = document.createElement('label');
         opt.className = 'scale__opt';
         const radio = document.createElement('input');
@@ -116,7 +147,7 @@ function hasDraftContent(values) {
 function saveDraft(values, now) {
     try {
         if (!hasDraftContent(values)) { localStorage.removeItem(LS_DRAFT); return false; }
-        localStorage.setItem(LS_DRAFT, JSON.stringify({ savedAt: typeof now === 'number' ? now : Date.now(), values }));
+        localStorage.setItem(LS_DRAFT, JSON.stringify({ savedAt: typeof now === 'number' ? now : Date.now(), scale: SCALE_MAX, values }));
         return true;
     } catch (e) { return false; }
 }
@@ -128,7 +159,9 @@ function loadDraft(now) {
         if (!d || typeof d.savedAt !== 'number' || !d.values || typeof d.values !== 'object') return null;
         const t = typeof now === 'number' ? now : Date.now();
         if (t - d.savedAt > DRAFT_MAX_AGE_MS || d.savedAt > t + 60000) return null;
-        return hasDraftContent(d.values) ? d.values : null;
+        if (!hasDraftContent(d.values)) return null;
+        // a draft left by the 1-10 version of the app
+        return d.scale === SCALE_MAX ? d.values : valuesToScale5(d.values);
     } catch (e) { return null; }
 }
 
@@ -261,7 +294,8 @@ applyLabels();
 
 const DB_NAME = 'emotion-tracker-db';
 const STORE_NAME = 'entries';
-const DB_VERSION = 1;
+// v2: ratings moved from 1-10 to 1-5 (existing entries are converted during the upgrade)
+const DB_VERSION = 2;
 
 function openDb() {
     return new Promise((resolve, reject) => {
@@ -271,9 +305,24 @@ function openDb() {
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 const store = db.createObjectStore(STORE_NAME, { keyPath: 'id', autoIncrement: true });
                 store.createIndex('timestamp', 'timestamp', { unique: false });
+            } else if (e.oldVersion < 2) {
+                // Runs inside the upgrade transaction, so either every entry is converted or none is.
+                const cursorReq = req.transaction.objectStore(STORE_NAME).openCursor();
+                cursorReq.onsuccess = () => {
+                    const cursor = cursorReq.result;
+                    if (!cursor) return;
+                    const next = migrateRecordToScale5(cursor.value);
+                    if (next !== cursor.value) cursor.update(next);
+                    cursor.continue();
+                };
             }
         };
-        req.onsuccess = () => resolve(req.result);
+        req.onsuccess = () => {
+            const db = req.result;
+            // let a future version upgrade the database even while this tab is open
+            db.onversionchange = () => db.close();
+            resolve(db);
+        };
         req.onerror = () => reject(req.error);
     });
 }
@@ -284,7 +333,7 @@ async function addEntry(values, weather) {
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         const store = tx.objectStore(STORE_NAME);
-        const record = { timestamp: Date.now(), values, exported: false };
+        const record = { timestamp: Date.now(), values, exported: false, scale: SCALE_MAX };
         if (weather && typeof weather === 'object') record.weather = weather;
         const req = store.add(record);
         req.onsuccess = () => resolve(req.result);
@@ -316,6 +365,7 @@ async function clearAllEntries() {
 
 // Turn one item from an imported JSON file into a record to store.
 // Accepts full exported records ({ timestamp, values, exported }) or a bare values object.
+// Anything not marked `scale: 5` came from the 1-10 version of the app and is converted.
 function normalizeImportRecord(item) {
     const rec = {
         timestamp: item.timestamp || Date.now(),
@@ -324,7 +374,12 @@ function normalizeImportRecord(item) {
     };
     // keep weather from an earlier export
     if (item.values && item.weather && typeof item.weather === 'object' && !Array.isArray(item.weather)) rec.weather = item.weather;
-    return rec;
+    if (item.values && item.scale === SCALE_MAX) {
+        rec.scale = SCALE_MAX;
+        if (item.legacyValues10 && typeof item.legacyValues10 === 'object') rec.legacyValues10 = item.legacyValues10;
+        return rec;
+    }
+    return migrateRecordToScale5(rec);
 }
 
 async function importEntriesFromArray(arr) {
@@ -777,7 +832,7 @@ function formToValues() {
 
         if (el && el.value) {
             const n = parseInt(el.value, 10);
-            values[key] = Number.isFinite(n) ? Math.max(1, Math.min(10, n)) : null;
+            values[key] = Number.isFinite(n) ? Math.max(1, Math.min(SCALE_MAX, n)) : null;
         } else {
             values[key] = null;
         }
@@ -1373,10 +1428,10 @@ function closeEntryEditModal() {
 
 async function saveEntryEditModal() {
     if (!editingEntry) return;
-    const rec = Object.assign({}, editingEntry, { values: Object.assign({}, editingEntry.values) });
+    const rec = Object.assign({}, editingEntry, { values: Object.assign({}, editingEntry.values), scale: SCALE_MAX });
     document.querySelectorAll('#entry-edit-fields input[data-key]').forEach(input => {
         const n = parseInt(input.value, 10);
-        rec.values[input.dataset.key] = Number.isFinite(n) ? Math.max(1, Math.min(10, n)) : null;
+        rec.values[input.dataset.key] = Number.isFinite(n) ? Math.max(1, Math.min(SCALE_MAX, n)) : null;
     });
     const note = document.getElementById('entry-edit-note').value.trim();
     rec.values.note = note.length ? note : null;
@@ -1922,7 +1977,7 @@ function renderTrends(entries) {
     if (legend) {
         legend.hidden = !overlay;
         legend.innerHTML = overlay
-            ? `<span class="trends__key"><span class="trends__swatch" aria-hidden="true"></span>${escapeHtml(LABELS[key] || key)} (1–10, left)</span>`
+            ? `<span class="trends__key"><span class="trends__swatch" aria-hidden="true"></span>${escapeHtml(LABELS[key] || key)} (1–${SCALE_MAX}, left)</span>`
               + `<span class="trends__key"><span class="trends__swatch trends__swatch--wx${overlay.metric === 'precip' ? ' trends__swatch--bar' : ''}" aria-hidden="true"></span>${escapeHtml(overlay.label)} (${escapeHtml(weatherUnit(overlay.metric, overlay.units))}, ${overlay.metric === 'precip' ? 'bars below' : 'right'})</span>`
               + (overlay.series ? '' : `<span class="trends__key">No weather in this range yet</span>`)
             : '';
@@ -1953,7 +2008,7 @@ function summarizeSeries(series) {
     return { avg, min, max, total, daysWithData: withVals.length };
 }
 
-// Dependency-free SVG line chart; scale is fixed at 1–10. Gaps in the data break the line.
+// Dependency-free SVG line chart; scale is fixed at 1–SCALE_MAX. Gaps in the data break the line.
 // `overlay` (optional) = { metric, units, label, series: [{ date, value }] } draws weather on a right-hand axis.
 function buildTrendSvg(series, label, width, overlay) {
     // draw at the container's real width so text stays readable on phones
@@ -1961,18 +2016,19 @@ function buildTrendSvg(series, label, width, overlay) {
     const wxSeries = overlay && Array.isArray(overlay.series) && overlay.series.length === series.length ? overlay.series : null;
     const axis = wxSeries ? weatherAxis(wxSeries.map(p => p.value), overlay.metric) : null;
     // Rain bars get their own strip under the mood plot. Drawn over the mood scale they hid
-    // the mood line and dots, and bar heights read as if they were on the 1–10 scale.
+    // the mood line and dots, and bar heights read as if they were on the mood scale.
     const band = axis && overlay.metric === 'precip' ? (W < 480 ? 44 : 52) : 0;
     const H = (W < 480 ? 200 : 260) + band;
     const m = { top: 14, right: axis ? 46 : 16, bottom: 30 + band, left: 30 };
     const iw = W - m.left - m.right, ih = H - m.top - m.bottom;
     const n = series.length;
     const x = i => m.left + (n === 1 ? iw / 2 : (i / (n - 1)) * iw);
-    const y = v => m.top + ih - ((v - 1) / 9) * ih;
+    // clamp so a stray out-of-range rating can't be drawn outside the plot
+    const y = v => m.top + ih - ((Math.max(1, Math.min(SCALE_MAX, v)) - 1) / (SCALE_MAX - 1)) * ih;
     const fmt = d => d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 
     let grid = '';
-    [1, 4, 7, 10].forEach(v => {
+    [1, 2, 3, 4, 5].forEach(v => {
         grid += `<line class="trend-grid" x1="${m.left}" x2="${W - m.right}" y1="${y(v)}" y2="${y(v)}"/>`;
         grid += `<text class="trend-axis" x="${m.left - 8}" y="${y(v) + 4}" text-anchor="end">${v}</text>`;
     });

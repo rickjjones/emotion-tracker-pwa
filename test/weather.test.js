@@ -172,8 +172,8 @@ describe('Weather', () => {
     // Shared by the chart tests below: mood dots and rain bars from one SVG string.
     const moodDots = svg => [...svg.matchAll(/<circle class="trend-dot" cx="([\d.]+)" cy="([\d.]+)"/g)].map(m => [+m[1], +m[2]]);
     const rainBars = svg => [...svg.matchAll(/<rect class="trend-wx-bar" x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/g)].map(m => ({ top: +m[1], bottom: +m[1] + +m[2] }));
-    const plotBottom = svg => Math.max(...[...svg.matchAll(/<line class="trend-grid" x1="\d+" x2="\d+" y1="([\d.]+)"/g)].slice(0, 4).map(m => +m[1])); // the "1" grid line
-    const week = () => Array.from({ length: 7 }, (_, i) => ({ timestamp: at(2026, 11, 17 + i, 10), values: { energy: 2 + i }, weather: { status: 'ok', temp: 40 + i * 3, pressure: 1005 + i, humidity: 50 + i, precip: i % 2 ? 0 : 1 + i } }));
+    const plotBottom = svg => Math.max(...[...svg.matchAll(/<line class="trend-grid" x1="\d+" x2="\d+" y1="([\d.]+)"/g)].slice(0, 5).map(m => +m[1])); // the "1" grid line
+    const week = () => Array.from({ length: 7 }, (_, i) => ({ timestamp: at(2026, 11, 17 + i, 10), values: { energy: 1 + (i % 5) }, weather: { status: 'ok', temp: 40 + i * 3, pressure: 1005 + i, humidity: 50 + i, precip: i % 2 ? 0 : 1 + i } }));
     const chartFor = (entries, metric, width = 640) => app.buildTrendSvg(app.computeDailySeries(entries, 'energy', 7, NOW), 'Energy', width,
         metric ? { metric, units: 'metric', label: metric, series: app.computeDailyWeather(entries, metric, 'metric', 7, NOW) } : null);
 
